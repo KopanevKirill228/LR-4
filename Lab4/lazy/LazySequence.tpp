@@ -1,6 +1,9 @@
 #pragma once
 
 #include "LazySequence.h"
+#include "LazyOperationGenerator.h"
+#include "LazyOperationGenerator.tpp"
+
 
 
 template <class T>
@@ -35,8 +38,6 @@ LazySequence<T>::LazySequence(const T* items, int count)
         finite_length_ = count;
     }
     catch (...) {
-        delete generator_;
-        generator_ = nullptr;
         finite_length_ = 0;
         throw;
     }
@@ -44,20 +45,16 @@ LazySequence<T>::LazySequence(const T* items, int count)
 
 
 template <class T>
-LazySequence<T>::LazySequence(const Sequence<T>* seq)
+LazySequence<T>::LazySequence(const Sequence<T>& seq)
     : materialized_(),
     generator_(nullptr),
     is_infinite_(false),
     finite_length_(0)
 {
-    if (seq == nullptr) {
-        throw std::invalid_argument("LazySequence: sequence is nullptr");
-    }
-
     IEnumerator<T>* en = nullptr;
 
     try {
-        en = seq->GetEnumerator();
+        en = seq.GetEnumerator();
 
         if (en == nullptr) {
             throw std::runtime_error("LazySequence: enumerator is nullptr");
@@ -80,8 +77,8 @@ LazySequence<T>::LazySequence(const Sequence<T>* seq)
 
 template <class T>
 LazySequence<T>::LazySequence(
-    std::function<T(const Sequence<T>*)> rule,
-    const Sequence<T>* initialValues)
+    std::function<T(const Sequence<T>&)> rule,
+    const Sequence<T>& initialValues)
     : materialized_(),
     generator_(nullptr),
     is_infinite_(true),
@@ -91,14 +88,10 @@ LazySequence<T>::LazySequence(
         throw std::invalid_argument("LazySequence: rule is empty");
     }
 
-    if (initialValues == nullptr) {
-        throw std::invalid_argument("LazySequence: initial values is nullptr");
-    }
-
     IEnumerator<T>* en = nullptr;
 
     try {
-        en = initialValues->GetEnumerator();
+        en = initialValues.GetEnumerator();
 
         if (en == nullptr) {
             throw std::runtime_error("LazySequence: enumerator is nullptr");
@@ -115,7 +108,7 @@ LazySequence<T>::LazySequence(
             throw std::invalid_argument("LazySequence: initial values must not be empty");
         }
 
-        generator_ = new Generator<T>(rule, &materialized_);
+        generator_ = new RuleGenerator<T>(rule, materialized_);
     }
     catch (...) {
         delete en;
@@ -135,8 +128,8 @@ LazySequence<T>::LazySequence(const LazySequence<T>& other)
 {
     try {
         if (other.generator_ != nullptr) {
-            generator_ = new Generator<T>(*other.generator_);
-            generator_->SetSource(&materialized_);
+            generator_ = other.generator_->Clone();
+            generator_->SetSource(materialized_);
         }
     }
     catch (...) {
@@ -158,13 +151,13 @@ LazySequence<T>& LazySequence<T>::operator=(const LazySequence<T>& other) {
 
     try {
         if (other.generator_ != nullptr) {
-            newGenerator = new Generator<T>(*other.generator_);
+            newGenerator = other.generator_->Clone();
         }
 
         materialized_ = newMaterialized;
 
         if (newGenerator != nullptr) {
-            newGenerator->SetSource(&materialized_);
+            newGenerator->SetSource(materialized_);
         }
 
         delete generator_;
@@ -202,6 +195,28 @@ void LazySequence<T>::AppendMaterialized(const T& item) const {
     }
 }
 
+template <class T>
+LazySequence<T>::LazySequence(
+    Generator<T>* generator,
+    bool isInfinite,
+    int finiteLength
+)
+    : materialized_(),
+    generator_(generator),
+    is_infinite_(isInfinite),
+    finite_length_(finiteLength)
+{
+    if (generator_ == nullptr && (is_infinite_ || finite_length_ > 0)) {
+        throw std::invalid_argument("LazySequence: generator is nullptr");
+    }
+
+    if (!is_infinite_ && finite_length_ < 0) {
+        delete generator_;
+        generator_ = nullptr;
+
+        throw std::invalid_argument("LazySequence: finite length is negative");
+    }
+}
 
 template <class T>
 void LazySequence<T>::CheckIndex(int index) const {
@@ -278,6 +293,15 @@ int LazySequence<T>::GetLength() const {
     return finite_length_;
 }
 
+template <class T>
+Cardinal LazySequence<T>::GetCardinality() const {
+    if (is_infinite_) {
+        return Cardinal::Infinity();
+    }
+
+    return Cardinal::Finite(finite_length_);
+}
+
 
 template <class T>
 int LazySequence<T>::GetMaterializedCount() const {
@@ -325,19 +349,31 @@ Sequence<T>* LazySequence<T>::GetSubsequence(int startIndex, int endIndex) const
 template <class T>
 Sequence<T>* LazySequence<T>::Append(const T& item) {
     if (is_infinite_) {
-        throw std::logic_error("LazySequence: cannot append to infinite sequence in this implementation");
+        return new LazySequence<T>(*this);
     }
 
-    LazySequence<T>* result = new LazySequence<T>(*this);
+    bool result_is_infinite = false;
+    int result_length = finite_length_ + 1;
+
+    Generator<T>* new_generator = nullptr;
 
     try {
-        result->AppendMaterialized(item);
-        ++result->finite_length_;
+        new_generator = new LazyOperationGenerator<T>(
+            *this,
+            item,
+            finite_length_,
+            result_is_infinite,
+            result_length
+        );
 
-        return result;
+        return new LazySequence<T>(
+            new_generator,
+            result_is_infinite,
+            result_length
+        );
     }
     catch (...) {
-        delete result;
+        delete new_generator;
         throw;
     }
 }
@@ -345,25 +381,28 @@ Sequence<T>* LazySequence<T>::Append(const T& item) {
 
 template <class T>
 Sequence<T>* LazySequence<T>::Prepend(const T& item) {
-    if (is_infinite_) {
-        throw std::logic_error("LazySequence: cannot prepend to infinite sequence in this implementation");
-    }
+    bool result_is_infinite = is_infinite_;
+    int result_length = is_infinite_ ? -1 : finite_length_ + 1;
 
-    LazySequence<T>* result = new LazySequence<T>();
+    Generator<T>* new_generator = nullptr;
 
     try {
-        result->AppendMaterialized(item);
-        ++result->finite_length_;
+        new_generator = new LazyOperationGenerator<T>(
+            *this,
+            item,
+            0,
+            result_is_infinite,
+            result_length
+        );
 
-        for (int i = 0; i < finite_length_; ++i) {
-            result->AppendMaterialized(Get(i));
-            ++result->finite_length_;
-        }
-
-        return result;
+        return new LazySequence<T>(
+            new_generator,
+            result_is_infinite,
+            result_length
+        );
     }
     catch (...) {
-        delete result;
+        delete new_generator;
         throw;
     }
 }
@@ -371,34 +410,36 @@ Sequence<T>* LazySequence<T>::Prepend(const T& item) {
 
 template <class T>
 Sequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
-    if (is_infinite_) {
-        throw std::logic_error("LazySequence: cannot insert into infinite sequence in this implementation");
+    if (index < 0) {
+        throw std::out_of_range("LazySequence InsertAt: index is negative");
     }
 
-    if (index < 0 || index > finite_length_) {
-        throw std::out_of_range("LazySequence: insert index is out of range");
+    if (!is_infinite_ && index > finite_length_) {
+        throw std::out_of_range("LazySequence InsertAt: index is out of range");
     }
 
-    LazySequence<T>* result = new LazySequence<T>();
+    bool result_is_infinite = is_infinite_;
+    int result_length = is_infinite_ ? -1 : finite_length_ + 1;
+
+    Generator<T>* new_generator = nullptr;
 
     try {
-        for (int i = 0; i < index; ++i) {
-            result->AppendMaterialized(Get(i));
-            ++result->finite_length_;
-        }
+        new_generator = new LazyOperationGenerator<T>(
+            *this,
+            item,
+            index,
+            result_is_infinite,
+            result_length
+        );
 
-        result->AppendMaterialized(item);
-        ++result->finite_length_;
-
-        for (int i = index; i < finite_length_; ++i) {
-            result->AppendMaterialized(Get(i));
-            ++result->finite_length_;
-        }
-
-        return result;
+        return new LazySequence<T>(
+            new_generator,
+            result_is_infinite,
+            result_length
+        );
     }
     catch (...) {
-        delete result;
+        delete new_generator;
         throw;
     }
 }
@@ -407,30 +448,47 @@ Sequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
 template <class T>
 Sequence<T>* LazySequence<T>::Concat(const Sequence<T>& other) const {
     if (is_infinite_) {
-        throw std::logic_error("LazySequence: cannot concat after infinite sequence in this implementation");
+        return new LazySequence<T>(*this);
     }
 
-    LazySequence<T>* result = new LazySequence<T>(*this);
-    IEnumerator<T>* en = nullptr;
+    const LazySequence<T>* lazy_other = dynamic_cast<const LazySequence<T>*>(&other);
+
+    LazySequence<T>* converted_other = nullptr;
+    const LazySequence<T>* right = lazy_other;
+
+    Generator<T>* new_generator = nullptr;
 
     try {
-        en = other.GetEnumerator();
-
-        if (en == nullptr) {
-            throw std::runtime_error("LazySequence: enumerator is nullptr");
+        if (right == nullptr) {
+            converted_other = new LazySequence<T>(other);
+            right = converted_other;
         }
 
-        while (en->MoveNext()) {
-            result->AppendMaterialized(en->GetCurrent());
-            ++result->finite_length_;
-        }
+        bool result_is_infinite = right->IsInfinite();
+        int result_length = result_is_infinite
+            ? -1
+            : finite_length_ + right->GetLength();
 
-        delete en;
+        new_generator = new LazyOperationGenerator<T>(
+            *this,
+            *right,
+            result_is_infinite,
+            result_length
+        );
+
+        LazySequence<T>* result = new LazySequence<T>(
+            new_generator,
+            result_is_infinite,
+            result_length
+        );
+
+        delete converted_other;
+
         return result;
     }
     catch (...) {
-        delete en;
-        delete result;
+        delete converted_other;
+        delete new_generator;
         throw;
     }
 }

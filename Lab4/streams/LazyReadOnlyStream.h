@@ -3,6 +3,7 @@
 #include "ReadOnlyStream.h"
 #include "StreamExceptions.h"
 #include "../lib/Sequence.h"
+#include "../lazy/LazySequence.h"
 
 #include <stdexcept>
 

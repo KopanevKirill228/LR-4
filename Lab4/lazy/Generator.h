@@ -1,38 +1,21 @@
 #pragma once
 
-#include "lib/Sequence.h"
-
-#include <functional>
-#include <stdexcept>
+#include "../lib/Sequence.h"
 
 
 template <class T>
 class Generator {
-private:
-    std::function<T(const Sequence<T>*)> rule_;
-    const Sequence<T>* source_;
-    int position_;
-    bool has_next_;
-
 public:
-    Generator();
+    virtual ~Generator() = default;
 
-    Generator(
-        std::function<T(const Sequence<T>*)> rule,
-        const Sequence<T>* source
-    );
+    virtual bool HasNext() const = 0;
+    virtual T GetNext() = 0;
 
-    Generator(const Generator<T>& other);
+    virtual int GetPosition() const = 0;
 
-    Generator<T>& operator=(const Generator<T>& other);
+    virtual void SetSource(const Sequence<T>& source) = 0;
 
-    bool HasNext() const;
-    T GetNext();
+    virtual void Reset() = 0;
 
-    int GetPosition() const;
-
-    void SetSource(const Sequence<T>* source);
-    void Reset();
+    virtual Generator<T>* Clone() const = 0;
 };
-
-#include "Generator.tpp"
