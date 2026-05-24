@@ -7,6 +7,8 @@
 #include "lazy/RuleGenerator.h"
 #include "lazy/SequenceGenerator.h"
 #include "lazy/LazySequence.h"
+#include "tasks/Event.h"
+#include "tasks/OnlineEventStatistics.h"
 
 
 static int total = 0;
@@ -49,6 +51,37 @@ static void fail(const char* desc, const char* file, int line, const char* expr)
     do { std::cout << "\n=== " << name << " ===\n"; } while (0)
 
 
+static bool near(double first, double second) {
+    double diff = first - second;
+
+    if (diff < 0) {
+        diff = -diff;
+    }
+
+    return diff < 0.000001;
+}
+
+
+#define CHECK_NEAR(desc, first, second) \
+    do { \
+        if (near((first), (second))) { ok(desc); } \
+        else { fail(desc, __FILE__, __LINE__, #first " near " #second); } \
+    } while (0)
+
+
+static LazySequence<int>* CreateNaturals() {
+    int init_data[] = { 0 };
+    MutableArraySequence<int> init(init_data, 1);
+
+    return new LazySequence<int>(
+        [](const Sequence<int>& source) {
+            return source.GetLength();
+        },
+        init
+    );
+}
+
+
 static LazySequence<int>* CreateFibonacci() {
     int init_data[] = { 0, 1 };
     MutableArraySequence<int> init(init_data, 2);
@@ -63,173 +96,300 @@ static LazySequence<int>* CreateFibonacci() {
 }
 
 
-void test_InsertAtFinite() {
-    SUITE("LazySequence InsertAt finite");
+void test_ConcatCardinality() {
+    SUITE("Concat cardinality");
 
-    int data[] = { 10, 20, 30 };
-    LazySequence<int> seq(data, 3);
+    {
+        int left_data[] = { 10, 20 };
+        int right_data[] = { 30, 40, 50 };
 
-    Sequence<int>* inserted = seq.InsertAt(15, 1);
+        LazySequence<int> left(left_data, 2);
+        LazySequence<int> right(right_data, 3);
 
-    CHECK("finite insert length", inserted->GetLength() == 4);
-    CHECK("finite insert first", inserted->Get(0) == 10);
-    CHECK("finite insert item", inserted->Get(1) == 15);
-    CHECK("finite insert shifted first", inserted->Get(2) == 20);
-    CHECK("finite insert shifted second", inserted->Get(3) == 30);
+        Sequence<int>* result = left.Concat(right);
+        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-    CHECK("finite original length unchanged", seq.GetLength() == 3);
-    CHECK("finite original value unchanged", seq.Get(1) == 20);
+        CHECK("finite + finite result is lazy", lazy_result != nullptr);
+        CHECK("finite + finite cardinality finite", lazy_result->GetCardinality().IsFinite());
+        CHECK("finite + finite cardinality value", lazy_result->GetCardinality().GetFiniteValue() == 5);
+        CHECK("finite + finite length", lazy_result->GetLength() == 5);
 
-    delete inserted;
+        CHECK("finite + finite value 0", lazy_result->Get(0) == 10);
+        CHECK("finite + finite value 1", lazy_result->Get(1) == 20);
+        CHECK("finite + finite value 2", lazy_result->Get(2) == 30);
+        CHECK("finite + finite value 4", lazy_result->Get(4) == 50);
 
-    Sequence<int>* insert_begin = seq.InsertAt(5, 0);
+        delete result;
+    }
 
-    CHECK("finite insert begin length", insert_begin->GetLength() == 4);
-    CHECK("finite insert begin value", insert_begin->Get(0) == 5);
-    CHECK("finite insert begin shifted", insert_begin->Get(1) == 10);
+    {
+        int left_data[] = { 100, 200 };
+        LazySequence<int> left(left_data, 2);
 
-    delete insert_begin;
+        LazySequence<int>* right = CreateNaturals();
 
-    Sequence<int>* insert_end = seq.InsertAt(40, 3);
+        Sequence<int>* result = left.Concat(*right);
+        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-    CHECK("finite insert end length", insert_end->GetLength() == 4);
-    CHECK("finite insert end old last", insert_end->Get(2) == 30);
-    CHECK("finite insert end new last", insert_end->Get(3) == 40);
+        CHECK("finite + infinite result is lazy", lazy_result != nullptr);
+        CHECK("finite + infinite cardinality infinite", lazy_result->GetCardinality().IsInfinite());
+        CHECK_THROWS("finite + infinite GetLength throws", lazy_result->GetLength());
 
-    delete insert_end;
+        CHECK("finite + infinite left 0", lazy_result->Get(0) == 100);
+        CHECK("finite + infinite left 1", lazy_result->Get(1) == 200);
+        CHECK("finite + infinite right 0", lazy_result->Get(2) == 0);
+        CHECK("finite + infinite right 1", lazy_result->Get(3) == 1);
+        CHECK("finite + infinite right 5", lazy_result->Get(7) == 5);
 
-    CHECK_THROWS("finite insert negative throws", seq.InsertAt(100, -1));
-    CHECK_THROWS("finite insert too far throws", seq.InsertAt(100, 4));
+        delete result;
+        delete right;
+    }
+
+    {
+        LazySequence<int>* left = CreateNaturals();
+
+        int right_data[] = { 100, 200 };
+        LazySequence<int> right(right_data, 2);
+
+        Sequence<int>* result = left->Concat(right);
+        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
+
+        CHECK("infinite + finite result is lazy", lazy_result != nullptr);
+        CHECK("infinite + finite cardinality infinite", lazy_result->GetCardinality().IsInfinite());
+        CHECK_THROWS("infinite + finite GetLength throws", lazy_result->GetLength());
+
+        CHECK("infinite + finite finite index 0 from left", lazy_result->Get(0) == 0);
+        CHECK("infinite + finite finite index 1 from left", lazy_result->Get(1) == 1);
+        CHECK("infinite + finite finite index 5 from left", lazy_result->Get(5) == 5);
+
+        delete result;
+        delete left;
+    }
+
+    {
+        LazySequence<int>* left = CreateNaturals();
+        LazySequence<int>* right = CreateFibonacci();
+
+        Sequence<int>* result = left->Concat(*right);
+        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
+
+        CHECK("infinite + infinite result is lazy", lazy_result != nullptr);
+        CHECK("infinite + infinite cardinality infinite", lazy_result->GetCardinality().IsInfinite());
+        CHECK("infinite + infinite finite index 0 from left", lazy_result->Get(0) == 0);
+        CHECK("infinite + infinite finite index 10 from left", lazy_result->Get(10) == 10);
+
+        delete result;
+        delete right;
+        delete left;
+    }
 }
 
 
-void test_InsertAtInfinite() {
-    SUITE("LazySequence InsertAt infinite");
+void test_InsertSequenceFinite() {
+    SUITE("InsertSequence finite inserted");
 
-    LazySequence<int>* fib = CreateFibonacci();
+    int source_data[] = { 10, 20, 30, 40 };
+    int inserted_data[] = { 111, 222 };
 
-    Sequence<int>* inserted = fib->InsertAt(100, 3);
-    LazySequence<int>* lazy_inserted = dynamic_cast<LazySequence<int>*>(inserted);
+    LazySequence<int> source(source_data, 4);
+    LazySequence<int> inserted(inserted_data, 2);
 
-    CHECK("infinite insert result is LazySequence", lazy_inserted != nullptr);
-    CHECK("infinite insert result is infinite", lazy_inserted->IsInfinite());
-    CHECK("infinite insert GetLength throws", true);
+    LazySequence<int>* result = source.InsertSequenceAt(inserted, 2);
 
-    CHECK_THROWS("infinite insert GetLength really throws", lazy_inserted->GetLength());
+    CHECK("finite insert finite cardinality finite", result->GetCardinality().IsFinite());
+    CHECK("finite insert finite cardinality value", result->GetCardinality().GetFiniteValue() == 6);
+    CHECK("finite insert finite length", result->GetLength() == 6);
 
-    CHECK("infinite insert value 0", lazy_inserted->Get(0) == 0);
-    CHECK("infinite insert value 1", lazy_inserted->Get(1) == 1);
-    CHECK("infinite insert value 2", lazy_inserted->Get(2) == 1);
-    CHECK("infinite insert inserted item", lazy_inserted->Get(3) == 100);
-    CHECK("infinite insert shifted 3", lazy_inserted->Get(4) == 2);
-    CHECK("infinite insert shifted 4", lazy_inserted->Get(5) == 3);
-    CHECK("infinite insert shifted 5", lazy_inserted->Get(6) == 5);
-
-    CHECK("infinite original unchanged", fib->Get(3) == 2);
-
-    delete inserted;
-
-    Sequence<int>* insert_begin = fib->InsertAt(777, 0);
-    LazySequence<int>* lazy_begin = dynamic_cast<LazySequence<int>*>(insert_begin);
-
-    CHECK("infinite insert begin is infinite", lazy_begin->IsInfinite());
-    CHECK("infinite insert begin item", lazy_begin->Get(0) == 777);
-    CHECK("infinite insert begin old first", lazy_begin->Get(1) == 0);
-    CHECK("infinite insert begin old second", lazy_begin->Get(2) == 1);
-    CHECK("infinite insert begin old third", lazy_begin->Get(3) == 1);
-
-    delete insert_begin;
-
-    CHECK_THROWS("infinite insert negative throws", fib->InsertAt(100, -1));
-
-    delete fib;
-}
-
-
-void test_ConcatFiniteFinite() {
-    SUITE("LazySequence Concat finite + finite");
-
-    int left_data[] = { 1, 2 };
-    int right_data[] = { 3, 4 };
-
-    LazySequence<int> left(left_data, 2);
-    LazySequence<int> right(right_data, 2);
-
-    Sequence<int>* result = left.Concat(right);
-
-    CHECK("finite finite concat length", result->GetLength() == 4);
-    CHECK("finite finite concat 0", result->Get(0) == 1);
-    CHECK("finite finite concat 1", result->Get(1) == 2);
-    CHECK("finite finite concat 2", result->Get(2) == 3);
-    CHECK("finite finite concat 3", result->Get(3) == 4);
-
-    CHECK("finite finite original left unchanged", left.GetLength() == 2);
-    CHECK("finite finite original right unchanged", right.GetLength() == 2);
+    CHECK("finite insert finite value 0", result->Get(0) == 10);
+    CHECK("finite insert finite value 1", result->Get(1) == 20);
+    CHECK("finite insert finite inserted 0", result->Get(2) == 111);
+    CHECK("finite insert finite inserted 1", result->Get(3) == 222);
+    CHECK("finite insert finite shifted 0", result->Get(4) == 30);
+    CHECK("finite insert finite shifted 1", result->Get(5) == 40);
 
     delete result;
 }
 
 
-void test_ConcatInfiniteFinite() {
-    SUITE("LazySequence Concat infinite + finite");
+void test_InsertSequenceInfiniteSource() {
+    SUITE("InsertSequence into infinite source");
 
-    LazySequence<int>* fib = CreateFibonacci();
+    LazySequence<int>* source = CreateNaturals();
 
-    int data[] = { 100, 200 };
-    LazySequence<int> finite(data, 2);
+    int inserted_data[] = { 100, 200, 300 };
+    LazySequence<int> inserted(inserted_data, 3);
 
-    Sequence<int>* result = fib->Concat(finite);
+    LazySequence<int>* result = source->InsertSequenceAt(inserted, 2);
+
+    CHECK("infinite source insert finite cardinality infinite", result->GetCardinality().IsInfinite());
+    CHECK_THROWS("infinite source insert finite GetLength throws", result->GetLength());
+
+    CHECK("infinite source insert finite value 0", result->Get(0) == 0);
+    CHECK("infinite source insert finite value 1", result->Get(1) == 1);
+    CHECK("infinite source insert finite inserted 0", result->Get(2) == 100);
+    CHECK("infinite source insert finite inserted 1", result->Get(3) == 200);
+    CHECK("infinite source insert finite inserted 2", result->Get(4) == 300);
+    CHECK("infinite source insert finite shifted 0", result->Get(5) == 2);
+    CHECK("infinite source insert finite shifted 1", result->Get(6) == 3);
+
+    delete result;
+    delete source;
+}
+
+
+void test_InsertSequenceInfiniteInserted() {
+    SUITE("InsertSequence infinite inserted");
+
+    int source_data[] = { 10, 20, 30 };
+    LazySequence<int> source(source_data, 3);
+
+    LazySequence<int>* inserted = CreateNaturals();
+
+    LazySequence<int>* result = source.InsertSequenceAt(*inserted, 1);
+
+    CHECK("finite source insert infinite cardinality infinite", result->GetCardinality().IsInfinite());
+    CHECK_THROWS("finite source insert infinite GetLength throws", result->GetLength());
+
+    CHECK("finite source insert infinite left prefix", result->Get(0) == 10);
+    CHECK("finite source insert infinite inserted 0", result->Get(1) == 0);
+    CHECK("finite source insert infinite inserted 1", result->Get(2) == 1);
+    CHECK("finite source insert infinite inserted 2", result->Get(3) == 2);
+    CHECK("finite source insert infinite inserted 10", result->Get(11) == 10);
+
+    delete result;
+    delete inserted;
+}
+
+
+void test_InsertItemAsSpecialCase() {
+    SUITE("InsertAt item as special case");
+
+    int source_data[] = { 10, 20, 30 };
+    LazySequence<int> source(source_data, 3);
+
+    Sequence<int>* result = source.InsertAt(777, 1);
     LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-    CHECK("infinite finite concat result is LazySequence", lazy_result != nullptr);
-    CHECK("infinite finite concat is infinite", lazy_result->IsInfinite());
+    CHECK("item insert result is lazy", lazy_result != nullptr);
+    CHECK("item insert cardinality finite", lazy_result->GetCardinality().IsFinite());
+    CHECK("item insert cardinality value", lazy_result->GetCardinality().GetFiniteValue() == 4);
 
-    CHECK("infinite finite concat 0", lazy_result->Get(0) == 0);
-    CHECK("infinite finite concat 1", lazy_result->Get(1) == 1);
-    CHECK("infinite finite concat 2", lazy_result->Get(2) == 1);
-    CHECK("infinite finite concat 3", lazy_result->Get(3) == 2);
-    CHECK("infinite finite concat 6", lazy_result->Get(6) == 8);
+    CHECK("item insert value 0", lazy_result->Get(0) == 10);
+    CHECK("item insert item", lazy_result->Get(1) == 777);
+    CHECK("item insert shifted 0", lazy_result->Get(2) == 20);
+    CHECK("item insert shifted 1", lazy_result->Get(3) == 30);
 
     delete result;
-    delete fib;
 }
 
 
-void test_ConcatFiniteInfinite() {
-    SUITE("LazySequence Concat finite + infinite");
+void test_OnlineEventStatisticsMedianVariance() {
+    SUITE("OnlineEventStatistics median and variance");
 
-    int data[] = { 100, 200 };
-    LazySequence<int> finite(data, 2);
+    OnlineEventStatistics<double> stats;
 
-    LazySequence<int>* fib = CreateFibonacci();
+    CHECK_THROWS("median without measurements throws", stats.GetMedianMeasure());
+    CHECK_THROWS("variance without measurements throws", stats.GetVarianceMeasure());
 
-    Sequence<int>* result = finite.Concat(*fib);
-    LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
+    stats.AddEvent(Event<double>(EventType::Measure, 10.0, ""));
 
-    CHECK("finite infinite concat result is LazySequence", lazy_result != nullptr);
-    CHECK("finite infinite concat is infinite", lazy_result->IsInfinite());
-    CHECK_THROWS("finite infinite concat GetLength throws", lazy_result->GetLength());
+    CHECK("one value median", stats.GetMedianMeasure() == 10.0);
+    CHECK("one value variance", stats.GetVarianceMeasure() == 0.0);
 
-    CHECK("finite infinite concat 0", lazy_result->Get(0) == 100);
-    CHECK("finite infinite concat 1", lazy_result->Get(1) == 200);
-    CHECK("finite infinite concat 2", lazy_result->Get(2) == 0);
-    CHECK("finite infinite concat 3", lazy_result->Get(3) == 1);
-    CHECK("finite infinite concat 4", lazy_result->Get(4) == 1);
-    CHECK("finite infinite concat 5", lazy_result->Get(5) == 2);
-    CHECK("finite infinite concat 7", lazy_result->Get(7) == 5);
+    stats.AddEvent(Event<double>(EventType::Measure, 20.0, ""));
 
-    delete result;
-    delete fib;
+    CHECK("two values median", stats.GetMedianMeasure() == 15.0);
+    CHECK("two values variance", stats.GetVarianceMeasure() == 25.0);
+
+    stats.AddEvent(Event<double>(EventType::Measure, 30.0, ""));
+
+    CHECK("three values median", stats.GetMedianMeasure() == 20.0);
+    CHECK("three values average", stats.GetAverageMeasure() == 20.0);
+    CHECK_NEAR("three values variance", stats.GetVarianceMeasure(), 200.0 / 3.0);
+
+    stats.AddEvent(Event<double>(EventType::Measure, 40.0, ""));
+
+    CHECK("four values median", stats.GetMedianMeasure() == 25.0);
+    CHECK("four values average", stats.GetAverageMeasure() == 25.0);
+    CHECK("four values variance", stats.GetVarianceMeasure() == 125.0);
+
+    stats.Clear();
+
+    CHECK("clear has no measurements", !stats.HasMeasurements());
+    CHECK_THROWS("median after clear throws", stats.GetMedianMeasure());
+    CHECK_THROWS("variance after clear throws", stats.GetVarianceMeasure());
 }
 
+
+
+void test_GetAfterInfinite() {
+    SUITE("LazySequence GetAfterInfinite");
+
+    {
+        LazySequence<int>* left = CreateNaturals();
+
+        int right_data[] = { 100, 200 };
+        LazySequence<int> right(right_data, 2);
+
+        Sequence<int>* result = left->Concat(right);
+        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
+
+        CHECK("concat infinite finite ordinary index", lazy_result->Get(5) == 5);
+        CHECK("concat infinite finite after infinity 0", lazy_result->GetAfterInfinite(0) == 100);
+        CHECK("concat infinite finite after infinity 1", lazy_result->GetAfterInfinite(1) == 200);
+        CHECK_THROWS("concat infinite finite after infinity out of range", lazy_result->GetAfterInfinite(2));
+
+        delete result;
+        delete left;
+    }
+
+    {
+        int source_data[] = { 10, 20, 30 };
+        LazySequence<int> source(source_data, 3);
+
+        LazySequence<int>* inserted = CreateNaturals();
+
+        LazySequence<int>* result = source.InsertSequenceAt(*inserted, 1);
+
+        CHECK("insert infinite ordinary prefix", result->Get(0) == 10);
+        CHECK("insert infinite ordinary inserted 0", result->Get(1) == 0);
+        CHECK("insert infinite ordinary inserted 3", result->Get(4) == 3);
+
+        CHECK("insert infinite after infinity 0", result->GetAfterInfinite(0) == 20);
+        CHECK("insert infinite after infinity 1", result->GetAfterInfinite(1) == 30);
+        CHECK_THROWS("insert infinite after infinity out of range", result->GetAfterInfinite(2));
+
+        delete result;
+        delete inserted;
+    }
+
+    {
+        LazySequence<int>* source = CreateNaturals();
+
+        Sequence<int>* result = source->Append(999);
+        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
+
+        CHECK("append to infinite ordinary index", lazy_result->Get(10) == 10);
+        CHECK("append to infinite after infinity", lazy_result->GetAfterInfinite(0) == 999);
+
+        delete result;
+        delete source;
+    }
+}
 
 void run_all_tests() {
-    test_InsertAtFinite();
-    test_InsertAtInfinite();
+    test_ConcatCardinality();
 
-    test_ConcatFiniteFinite();
-    test_ConcatInfiniteFinite();
-    test_ConcatFiniteInfinite();
+    test_InsertSequenceFinite();
+    test_InsertSequenceInfiniteSource();
+    test_InsertSequenceInfiniteInserted();
+    test_InsertItemAsSpecialCase();
+
+
+    test_OnlineEventStatisticsMedianVariance();
+
+    test_GetAfterInfinite();
+
 
     std::cout << "\n=== RESULT ===\n";
     std::cout << "Passed: " << total - failed << " / " << total << "\n";

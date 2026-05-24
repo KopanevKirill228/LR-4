@@ -49,6 +49,8 @@ public:
     const T& Get(int index) const override;
     int GetLength() const override;
     Cardinal GetCardinality() const;
+    T GetAfterInfinite(int index) const;
+
 
     int GetMaterializedCount() const;
     bool IsInfinite() const;
@@ -58,6 +60,7 @@ public:
     Sequence<T>* Append(const T& item) override;
     Sequence<T>* Prepend(const T& item) override;
     Sequence<T>* InsertAt(const T& item, int index) override;
+    LazySequence<T>* InsertSequenceAt(const LazySequence<T>& sequence, int index);
     Sequence<T>* Concat(const Sequence<T>& other) const override;
 
     T operator[](int index) const override;

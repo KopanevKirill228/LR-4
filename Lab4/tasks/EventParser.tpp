@@ -1,14 +1,80 @@
 #pragma once
 
-#include <sstream>
-#include "EventParser.h"
+#include <cstdlib>
+#include <cerrno>
+
+
+static bool IsParserSpace(char ch) {
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+}
+
+
+static std::string GetFirstToken(const std::string& line) {
+    int start = 0;
+
+    while (start < static_cast<int>(line.size()) && IsParserSpace(line[start])) {
+        ++start;
+    }
+
+    int end = start;
+
+    while (end < static_cast<int>(line.size()) && !IsParserSpace(line[end])) {
+        ++end;
+    }
+
+    return line.substr(start, end - start);
+}
+
+
+static std::string GetRestAfterFirstToken(const std::string& line) {
+    int index = 0;
+
+    while (index < static_cast<int>(line.size()) && IsParserSpace(line[index])) {
+        ++index;
+    }
+
+    while (index < static_cast<int>(line.size()) && !IsParserSpace(line[index])) {
+        ++index;
+    }
+
+    while (index < static_cast<int>(line.size()) && IsParserSpace(line[index])) {
+        ++index;
+    }
+
+    return line.substr(index);
+}
+
+
+template <class T>
+static bool TryParseValue(const std::string& text, T& value) {
+    const char* begin = text.c_str();
+    char* end = nullptr;
+
+    errno = 0;
+
+    double parsed = std::strtod(begin, &end);
+
+    if (begin == end || errno == ERANGE) {
+        return false;
+    }
+
+    while (*end != '\0') {
+        if (!IsParserSpace(*end)) {
+            return false;
+        }
+
+        ++end;
+    }
+
+    value = static_cast<T>(parsed);
+
+    return true;
+}
+
 
 template <class T>
 Event<T> EventParser<T>::ParseLine(const std::string& line) {
-    std::istringstream input(line);
-
-    std::string command;
-    input >> command; // использовать readonlystream
+    std::string command = GetFirstToken(line);
 
     if (command == "START") {
         return Event<T>(EventType::Start, T(), "");
@@ -19,9 +85,11 @@ Event<T> EventParser<T>::ParseLine(const std::string& line) {
     }
 
     if (command == "MEASURE") {
+        std::string value_text = GetRestAfterFirstToken(line);
+
         T value;
 
-        if (input >> value) {
+        if (TryParseValue(value_text, value)) {
             return Event<T>(EventType::Measure, value, "");
         }
 
@@ -29,12 +97,7 @@ Event<T> EventParser<T>::ParseLine(const std::string& line) {
     }
 
     if (command == "ERROR") {
-        std::string message;
-        std::getline(input, message);
-
-        if (!message.empty() && message[0] == ' ') {
-            message.erase(0, 1);
-        }
+        std::string message = GetRestAfterFirstToken(line);
 
         return Event<T>(EventType::Error, T(), message);
     }

@@ -1,29 +1,39 @@
 #pragma once
 
-#include "EventParser.h"
-#include "../streams/StreamExceptions.h"
+
 #include "ProtocolStatisticsTask.h"
 
 
 template <class T>
-OnlineEventStatistics<T> ProtocolStatisticsTask<T>::Process(ReadOnlyStream<std::string>& stream) {
+OnlineEventStatistics<T> ProtocolStatisticsTask<T>::Process(
+    ReadOnlyStream<Event<T>>& stream
+) {
     OnlineEventStatistics<T> statistics;
 
     stream.Open();
 
     try {
-        while (true) {
-            std::string line = stream.Read();
-            Event<T> event = EventParser<T>::ParseLine(line);
+        while (!stream.IsEndOfStream()) {
+            Event<T> event = stream.Read();
             statistics.AddEvent(event);
         }
-    }
-    catch (const EndOfStreamException&) {
+
         stream.Close();
+
         return statistics;
     }
     catch (...) {
         stream.Close();
         throw;
     }
+}
+
+
+template <class T>
+OnlineEventStatistics<T> ProtocolStatisticsTask<T>::Process(
+    ReadOnlyStream<std::string>& stream
+) {
+    EventReadOnlyStream<T> event_stream(&stream);
+
+    return Process(event_stream);
 }

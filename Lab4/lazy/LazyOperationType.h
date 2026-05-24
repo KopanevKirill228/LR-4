@@ -1,6 +1,6 @@
 #pragma once
 
 enum class LazyOperationType {
-    Insert,
+    InsertSequence,
     Concat
 };

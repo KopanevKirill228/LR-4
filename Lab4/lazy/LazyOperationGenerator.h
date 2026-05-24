@@ -2,6 +2,7 @@
 
 #include "Generator.h"
 #include "LazyOperationType.h"
+#include "Cardinal.h"
 
 #include <stdexcept>
 
@@ -13,30 +14,27 @@ class LazyOperationGenerator : public Generator<T> {
 private:
     LazySequence<T>* first_;
     LazySequence<T>* second_;
-    T* item_;
 
     LazyOperationType operation_type_;
+
+    Cardinal first_length_;
+    Cardinal second_length_;
+    Cardinal result_length_;
 
     int index_;
     int position_;
 
-    bool is_infinite_;
-    int finite_length_;
-
 public:
-    LazyOperationGenerator(
-        const LazySequence<T>& source,
-        const T& item,
-        int index,
-        bool isInfinite,
-        int finiteLength
-    );
-
     LazyOperationGenerator(
         const LazySequence<T>& first,
         const LazySequence<T>& second,
-        bool isInfinite,
-        int finiteLength
+        bool isConcat
+    );
+
+    LazyOperationGenerator(
+        const LazySequence<T>& source,
+        const LazySequence<T>& inserted,
+        int index
     );
 
     LazyOperationGenerator(const LazyOperationGenerator<T>& other);
@@ -55,4 +53,10 @@ public:
     void Reset() override;
 
     Generator<T>* Clone() const override;
+
+    Cardinal GetResultCardinality() const;
+
+    T GetAfterInfinite(int index) const;
 };
+
+#include "LazyOperationGenerator.tpp"

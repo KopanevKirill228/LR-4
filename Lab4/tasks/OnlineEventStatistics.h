@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Event.h"
 #include "../lib/BinaryHeap.h"
+#include "Event.h"
 
 #include <stdexcept>
 
@@ -17,11 +17,19 @@ private:
     int unknown_events_;
 
     T measure_sum_;
+    T measure_square_sum_;
 
-    BinaryHeap<T> min_heap_;
-    BinaryHeap<T> max_heap_;
+    T min_measure_;
+    T max_measure_;
+    bool has_measurements_;
 
-    static bool MaxCompare(const T& a, const T& b);
+    BinaryHeap<T> lower_half_;
+    BinaryHeap<T> upper_half_;
+
+    static bool GreaterPriority(const T& first, const T& second);
+
+    void AddMeasure(const T& value);
+    void RebalanceMedianHeaps();
 
 public:
     OnlineEventStatistics();
@@ -38,9 +46,11 @@ public:
 
     bool HasMeasurements() const;
 
-    const T& GetMinMeasure() const;
-    const T& GetMaxMeasure() const;
+    T GetMinMeasure() const;
+    T GetMaxMeasure() const;
     T GetAverageMeasure() const;
+    T GetVarianceMeasure() const;
+    T GetMedianMeasure() const;
 };
 
 #include "OnlineEventStatistics.tpp"
