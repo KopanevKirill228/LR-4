@@ -1,0 +1,6 @@
+START
+MEASURE 10
+ERROR sensor disconnected
+BAD DATA
+MEASURE 20
+END

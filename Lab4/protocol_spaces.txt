@@ -1,0 +1,4 @@
+   START   
+   MEASURE   7.25   
+ERROR   spaced message
+   END   

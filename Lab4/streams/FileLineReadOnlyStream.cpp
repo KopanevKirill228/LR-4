@@ -1,31 +1,41 @@
 #include "FileLineReadOnlyStream.h"
 
+#include <stdexcept>
+
 
 FileLineReadOnlyStream::FileLineReadOnlyStream(const std::string& filename)
     : filename_(filename),
+    file_(),
+    current_line_(""),
+    has_current_line_(false),
     position_(0),
-    is_open_(false),
-    end_reached_(false)
-{
-    if (filename_.empty()) {
-        throw std::invalid_argument("FileLineReadOnlyStream: filename is empty");
-    }
+    is_open_(false) {
 }
 
 
 FileLineReadOnlyStream::~FileLineReadOnlyStream() {
-    if (file_.is_open()) {
-        file_.close();
+    if (is_open_) {
+        Close();
+    }
+}
+
+
+void FileLineReadOnlyStream::ReadNextLine() {
+    if (!std::getline(file_, current_line_)) {
+        current_line_ = "";
+        has_current_line_ = false;
+    }
+    else {
+        has_current_line_ = true;
     }
 }
 
 
 void FileLineReadOnlyStream::Open() {
-    if (file_.is_open()) {
-        file_.close();
+    if (is_open_) {
+        Close();
     }
 
-    file_.clear();
     file_.open(filename_);
 
     if (!file_.is_open()) {
@@ -34,7 +44,8 @@ void FileLineReadOnlyStream::Open() {
 
     position_ = 0;
     is_open_ = true;
-    end_reached_ = false;
+
+    ReadNextLine();
 }
 
 
@@ -43,38 +54,38 @@ void FileLineReadOnlyStream::Close() {
         file_.close();
     }
 
+    current_line_ = "";
+    has_current_line_ = false;
+    position_ = 0;
     is_open_ = false;
 }
 
 
 bool FileLineReadOnlyStream::IsEndOfStream() const {
     if (!is_open_) {
-        throw StreamIsClosedException();
+        return true;
     }
 
-    return end_reached_;
+    return !has_current_line_;
 }
 
 
 std::string FileLineReadOnlyStream::Read() {
     if (!is_open_) {
-        throw StreamIsClosedException();
+        throw std::logic_error("FileLineReadOnlyStream: stream is closed");
     }
 
-    if (end_reached_) {
-        throw EndOfStreamException();
+    if (IsEndOfStream()) {
+        throw std::out_of_range("FileLineReadOnlyStream: end of stream");
     }
 
-    std::string line;
-
-    if (!std::getline(file_, line)) {
-        end_reached_ = true;
-        throw EndOfStreamException();
-    }
+    std::string result = current_line_;
 
     ++position_;
 
-    return line;
+    ReadNextLine();
+
+    return result;
 }
 
 
@@ -84,44 +95,15 @@ int FileLineReadOnlyStream::GetPosition() const {
 
 
 bool FileLineReadOnlyStream::IsCanSeek() const {
-    return true;
+    return false;
 }
 
 
-int FileLineReadOnlyStream::Seek(int index) {
-    if (!is_open_) {
-        throw StreamIsClosedException();
-    }
-
-    if (index < 0) {
-        throw StreamSeekException();
-    }
-
-    file_.clear();
-    file_.seekg(0, std::ios::beg);
-
-    if (!file_) {
-        throw StreamSeekException();
-    }
-
-    position_ = 0;
-    end_reached_ = false;
-
-    std::string line;
-
-    while (position_ < index) {
-        if (!std::getline(file_, line)) {
-            end_reached_ = true;
-            throw StreamSeekException();
-        }
-
-        ++position_;
-    }
-
-    return position_;
+int FileLineReadOnlyStream::Seek(int) {
+    throw std::logic_error("FileLineReadOnlyStream: seek is not supported");
 }
 
 
 bool FileLineReadOnlyStream::IsCanGoBack() const {
-    return true;
+    return false;
 }

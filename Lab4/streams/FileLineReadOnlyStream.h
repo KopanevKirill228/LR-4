@@ -1,11 +1,9 @@
 #pragma once
 
 #include "ReadOnlyStream.h"
-#include "StreamExceptions.h"
 
 #include <fstream>
 #include <string>
-#include <stdexcept>
 
 
 class FileLineReadOnlyStream : public ReadOnlyStream<std::string> {
@@ -13,17 +11,17 @@ private:
     std::string filename_;
     std::ifstream file_;
 
+    std::string current_line_;
+    bool has_current_line_;
+
     int position_;
     bool is_open_;
-    bool end_reached_;
+
+    void ReadNextLine();
 
 public:
-    FileLineReadOnlyStream(const std::string& filename);
-
-    FileLineReadOnlyStream(const FileLineReadOnlyStream& other) = delete;
-    FileLineReadOnlyStream& operator=(const FileLineReadOnlyStream& other) = delete;
-
-    ~FileLineReadOnlyStream();
+    explicit FileLineReadOnlyStream(const std::string& filename);
+    ~FileLineReadOnlyStream() override;
 
     void Open() override;
     void Close() override;

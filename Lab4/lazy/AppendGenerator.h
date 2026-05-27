@@ -1,0 +1,53 @@
+#pragma once
+
+#include "Generator.h"
+#include "Cardinal.h"
+#include "TransfiniteIndex.h"
+
+#include <stdexcept>
+
+
+template <class T>
+class LazySequence;
+
+
+template <class T>
+class AppendGenerator : public Generator<T> {
+private:
+    LazySequence<T>* source_;
+    T* item_;
+
+    Cardinal source_length_;
+    Cardinal result_length_;
+
+    int position_;
+
+public:
+    AppendGenerator(
+        const LazySequence<T>& source,
+        const T& item
+    );
+
+    AppendGenerator(const AppendGenerator<T>& other);
+
+    AppendGenerator<T>& operator=(const AppendGenerator<T>& other);
+
+    ~AppendGenerator() override;
+
+    bool HasNext() const override;
+    T GetNext() override;
+
+    int GetPosition() const override;
+
+    void SetSource(const Sequence<T>& source) override;
+
+    void Reset() override;
+
+    Generator<T>* Clone() const override;
+
+    T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
+
+    Cardinal GetResultCardinality() const;
+};
+
+#include "AppendGenerator.tpp"

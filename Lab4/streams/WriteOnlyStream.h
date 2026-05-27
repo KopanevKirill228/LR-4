@@ -1,14 +1,12 @@
 #pragma once
 
+#include "Stream.h"
+
 
 template <class T>
-class WriteOnlyStream {
+class WriteOnlyStream : public Stream<T> {
 public:
-    virtual ~WriteOnlyStream() = default;
+    virtual ~WriteOnlyStream() override = default;
 
-    virtual void Open() = 0;
-    virtual void Close() = 0;
-
-    virtual int GetPosition() const = 0;
     virtual int Write(const T& item) = 0;
 };

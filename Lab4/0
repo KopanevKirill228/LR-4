@@ -1,0 +1,6 @@
+START
+MEASURE 5
+MEASURE 15
+ERROR sensor disconnected
+MEASURE 25
+END

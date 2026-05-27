@@ -1,9 +1,13 @@
 #pragma once
 
 #include "LazySequence.h"
-#include "LazyOperationGenerator.h"
-#include "LazyOperationGenerator.tpp"
-
+#include "ConcatGenerator.h"
+#include "InsertSequenceGenerator.h"
+#include "ConcatGenerator.h"
+#include "InsertSequenceGenerator.h"
+#include "AppendGenerator.h"
+#include "PrependGenerator.h"
+#include "InsertItemGenerator.h"
 
 
 template <class T>
@@ -195,6 +199,7 @@ void LazySequence<T>::AppendMaterialized(const T& item) const {
     }
 }
 
+
 template <class T>
 LazySequence<T>::LazySequence(
     Generator<T>* generator,
@@ -217,6 +222,7 @@ LazySequence<T>::LazySequence(
         throw std::invalid_argument("LazySequence: finite length is negative");
     }
 }
+
 
 template <class T>
 void LazySequence<T>::CheckIndex(int index) const {
@@ -285,6 +291,20 @@ const T& LazySequence<T>::Get(int index) const {
 
 
 template <class T>
+T LazySequence<T>::Get(const TransfiniteIndex& index) const {
+    if (index.IsFinite()) {
+        return Get(index.GetFiniteIndex());
+    }
+
+    if (generator_ == nullptr) {
+        throw std::logic_error("LazySequence Get: transfinite index is not supported");
+    }
+
+    return generator_->GetByTransfiniteIndex(index);
+}
+
+
+template <class T>
 int LazySequence<T>::GetLength() const {
     if (is_infinite_) {
         throw std::logic_error("LazySequence: infinite sequence has no finite length");
@@ -292,6 +312,7 @@ int LazySequence<T>::GetLength() const {
 
     return finite_length_;
 }
+
 
 template <class T>
 Cardinal LazySequence<T>::GetCardinality() const {
@@ -317,19 +338,9 @@ bool LazySequence<T>::IsInfinite() const {
 
 template <class T>
 T LazySequence<T>::GetAfterInfinite(int index) const {
-    if (index < 0) {
-        throw std::out_of_range("LazySequence GetAfterInfinite: index is negative");
-    }
-
-    const LazyOperationGenerator<T>* operation_generator =
-        dynamic_cast<const LazyOperationGenerator<T>*>(generator_);
-
-    if (operation_generator == nullptr) {
-        throw std::logic_error("LazySequence GetAfterInfinite: no infinite tail");
-    }
-
-    return operation_generator->GetAfterInfinite(index);
+    return Get(TransfiniteIndex::AfterInfinity(index));
 }
+
 
 template <class T>
 Sequence<T>* LazySequence<T>::GetSubsequence(int startIndex, int endIndex) const {
@@ -364,56 +375,13 @@ Sequence<T>* LazySequence<T>::GetSubsequence(int startIndex, int endIndex) const
 
 template <class T>
 Sequence<T>* LazySequence<T>::Append(const T& item) {
-    T items[] = { item };
-    LazySequence<T> inserted(items, 1);
-
-    return Concat(inserted);
-}
-
-
-template <class T>
-Sequence<T>* LazySequence<T>::Prepend(const T& item) {
-    T items[] = { item };
-    LazySequence<T> inserted(items, 1);
-
-    return InsertSequenceAt(inserted, 0);
-}
-
-
-template <class T>
-Sequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
-    T items[] = { item };
-    LazySequence<T> inserted(items, 1);
-
-    return InsertSequenceAt(inserted, index);
-}
-
-template <class T>
-LazySequence<T>* LazySequence<T>::InsertSequenceAt(
-    const LazySequence<T>& sequence,
-    int index //трансфинитный
-) {
-    if (index < 0) {
-        throw std::out_of_range("LazySequence InsertSequenceAt: index is negative");
-    }
-
-    if (!is_infinite_ && index > finite_length_) {
-        throw std::out_of_range("LazySequence InsertSequenceAt: index is out of range");
-    }
-
     Generator<T>* new_generator = nullptr;
 
     try {
-        new_generator = new LazyOperationGenerator<T>(
-            *this,
-            sequence,
-            index
-        );
+        new_generator = new AppendGenerator<T>(*this, item);
 
-        Cardinal result_cardinality = AddCardinal(
-            GetCardinality(),
-            sequence.GetCardinality()
-        );
+        Cardinal result_cardinality =
+            static_cast<AppendGenerator<T>*>(new_generator)->GetResultCardinality();
 
         return new LazySequence<T>(
             new_generator,
@@ -427,6 +395,99 @@ LazySequence<T>* LazySequence<T>::InsertSequenceAt(
     }
 }
 
+template <class T>
+Sequence<T>* LazySequence<T>::Prepend(const T& item) {
+    Generator<T>* new_generator = nullptr;
+
+    try {
+        new_generator = new PrependGenerator<T>(*this, item);
+
+        Cardinal result_cardinality =
+            static_cast<PrependGenerator<T>*>(new_generator)->GetResultCardinality();
+
+        return new LazySequence<T>(
+            new_generator,
+            result_cardinality.IsInfinite(),
+            result_cardinality.IsInfinite() ? -1 : result_cardinality.GetFiniteValue()
+        );
+    }
+    catch (...) {
+        delete new_generator;
+        throw;
+    }
+}
+
+
+template <class T>
+Sequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
+    Generator<T>* new_generator = nullptr;
+
+    try {
+        new_generator = new InsertItemGenerator<T>(
+            *this,
+            item,
+            index
+        );
+
+        Cardinal result_cardinality =
+            static_cast<InsertItemGenerator<T>*>(new_generator)->GetResultCardinality();
+
+        return new LazySequence<T>(
+            new_generator,
+            result_cardinality.IsInfinite(),
+            result_cardinality.IsInfinite() ? -1 : result_cardinality.GetFiniteValue()
+        );
+    }
+    catch (...) {
+        delete new_generator;
+        throw;
+    }
+}
+
+
+template <class T>
+LazySequence<T>* LazySequence<T>::InsertSequenceAt(
+    const LazySequence<T>& sequence,
+    const TransfiniteIndex& index
+) {
+    if (index.IsFinite()) {
+        int finite_index = index.GetFiniteIndex();
+
+        if (!is_infinite_ && finite_index > finite_length_) {
+            throw std::out_of_range("LazySequence InsertSequenceAt: index is out of range");
+        }
+    }
+    else {
+        if (!is_infinite_) {
+            throw std::out_of_range(
+                "LazySequence InsertSequenceAt: transfinite index for finite sequence"
+            );
+        }
+    }
+
+    Generator<T>* new_generator = nullptr;
+
+    try {
+        new_generator = new InsertSequenceGenerator<T>(
+            *this,
+            sequence,
+            index
+        );
+
+        Cardinal result_cardinality =
+            static_cast<InsertSequenceGenerator<T>*>(new_generator)->GetResultCardinality();
+
+        return new LazySequence<T>(
+            new_generator,
+            result_cardinality.IsInfinite(),
+            result_cardinality.IsInfinite() ? -1 : result_cardinality.GetFiniteValue()
+        );
+    }
+    catch (...) {
+        delete new_generator;
+        throw;
+    }
+}
 
 
 template <class T>
@@ -444,16 +505,13 @@ Sequence<T>* LazySequence<T>::Concat(const Sequence<T>& other) const {
             right = converted_other;
         }
 
-        new_generator = new LazyOperationGenerator<T>(
+        new_generator = new ConcatGenerator<T>(
             *this,
-            *right,
-            true
+            *right
         );
 
-        Cardinal result_cardinality = AddCardinal(
-            GetCardinality(),
-            right->GetCardinality()
-        );
+        Cardinal result_cardinality =
+            static_cast<ConcatGenerator<T>*>(new_generator)->GetResultCardinality();
 
         LazySequence<T>* result = new LazySequence<T>(
             new_generator,

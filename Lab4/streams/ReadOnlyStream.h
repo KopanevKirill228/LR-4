@@ -1,18 +1,15 @@
 #pragma once
 
+#include "Stream.h"
+
 
 template <class T>
-class ReadOnlyStream {
+class ReadOnlyStream : public Stream<T> {
 public:
-    virtual ~ReadOnlyStream() = default;
-
-    virtual void Open() = 0;
-    virtual void Close() = 0;
+    virtual ~ReadOnlyStream() override = default;
 
     virtual bool IsEndOfStream() const = 0;
     virtual T Read() = 0;
-
-    virtual int GetPosition() const = 0;
 
     virtual bool IsCanSeek() const = 0;
     virtual int Seek(int index) = 0;

@@ -8,6 +8,7 @@
 #include "RuleGenerator.h"
 #include "SequenceGenerator.h"
 #include "Cardinal.h"
+#include "TransfiniteIndex.h"
 
 #include <functional>
 #include <stdexcept>
@@ -46,11 +47,15 @@ public:
 
     const T& GetFirst() const override;
     const T& GetLast() const override;
+
     const T& Get(int index) const override;
+
+    T Get(const TransfiniteIndex& index) const;
+
     int GetLength() const override;
     Cardinal GetCardinality() const;
-    T GetAfterInfinite(int index) const;
 
+    T GetAfterInfinite(int index) const;
 
     int GetMaterializedCount() const;
     bool IsInfinite() const;
@@ -60,7 +65,12 @@ public:
     Sequence<T>* Append(const T& item) override;
     Sequence<T>* Prepend(const T& item) override;
     Sequence<T>* InsertAt(const T& item, int index) override;
-    LazySequence<T>* InsertSequenceAt(const LazySequence<T>& sequence, int index);
+
+    LazySequence<T>* InsertSequenceAt(
+        const LazySequence<T>& sequence,
+        const TransfiniteIndex& index
+    );
+
     Sequence<T>* Concat(const Sequence<T>& other) const override;
 
     T operator[](int index) const override;
