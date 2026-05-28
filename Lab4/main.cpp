@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <string>
 #include <limits>
@@ -11,9 +12,8 @@
 #include "lib/ArraySequence.h"
 
 #include "lazy/Cardinal.h"
+#include "lazy/CardinalIO.h"
 #include "lazy/TransfiniteIndex.h"
-#include "lazy/Generator.h"
-#include "lazy/RuleGenerator.h"
 #include "lazy/SequenceGenerator.h"
 #include "lazy/LazySequence.h"
 
@@ -21,53 +21,18 @@
 #include "streams/ReadOnlyStream.h"
 #include "streams/WriteOnlyStream.h"
 #include "streams/SequenceReadOnlyStream.h"
+#include "streams/SequenceWriteOnlyStream.h"
 #include "streams/LazyReadOnlyStream.h"
 #include "streams/FileLineReadOnlyStream.h"
+#include "streams/FileLineWriteOnlyStream.h"
+#include "streams/StreamExceptions.h"
 
+#include "tasks/EventType.h"
 #include "tasks/Event.h"
 #include "tasks/EventParser.h"
 #include "tasks/EventReadOnlyStream.h"
 #include "tasks/OnlineEventStatistics.h"
 #include "tasks/ProtocolStatisticsTask.h"
-
-
-template <class T>
-class ConsoleWriteOnlyStream : public WriteOnlyStream<T> {
-private:
-    int position_;
-    bool is_open_;
-
-public:
-    ConsoleWriteOnlyStream()
-        : position_(0),
-          is_open_(false) {
-    }
-
-    void Open() override {
-        position_ = 0;
-        is_open_ = true;
-    }
-
-    void Close() override {
-        is_open_ = false;
-    }
-
-    int GetPosition() const override {
-        return position_;
-    }
-
-    int Write(const T& item) override {
-        if (!is_open_) {
-            throw std::logic_error("ConsoleWriteOnlyStream: stream is closed");
-        }
-
-        std::cout << item;
-        ++position_;
-
-        return position_;
-    }
-};
-
 
 static void setupConsole() {
 #ifdef _WIN32
@@ -76,12 +41,10 @@ static void setupConsole() {
 #endif
 }
 
-
 static void clearInput() {
     std::cin.clear();
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 }
-
 
 static bool readInt(int& val) {
     if (!(std::cin >> val)) {
@@ -90,17 +53,13 @@ static bool readInt(int& val) {
     }
 
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
     return true;
 }
 
-
 static bool readIntWithPrompt(int& val, const std::string& prompt) {
     std::cout << prompt;
-
     return readInt(val);
 }
-
 
 static bool readIntInRange(int& val, const std::string& prompt, int lo, int hi) {
     while (true) {
@@ -116,8 +75,8 @@ static bool readIntInRange(int& val, const std::string& prompt, int lo, int hi) 
         }
 
         if (val < lo || val > hi) {
-            std::cout << "  [ERR] Enter a number from "
-                      << lo << " to " << hi << " (0 = back).\n";
+            std::cout << "  [ERR] Enter a number from " << lo
+                      << " to " << hi << " (0 = back).\n";
             continue;
         }
 
@@ -125,21 +84,16 @@ static bool readIntInRange(int& val, const std::string& prompt, int lo, int hi) 
     }
 }
 
-
 static std::string readLineWithPrompt(const std::string& prompt) {
     std::string line;
-
     std::cout << prompt;
     std::getline(std::cin, line);
-
     return line;
 }
-
 
 static void printSeparator() {
     std::cout << "------------------------------------------------------------\n";
 }
-
 
 static void printTitle(const std::string& title) {
     printSeparator();
@@ -147,23 +101,19 @@ static void printTitle(const std::string& title) {
     printSeparator();
 }
 
-
 static void printError(const std::string& msg) {
     std::cout << "  [ERR] " << msg << "\n";
 }
-
 
 static void pauseConsole() {
     std::cout << "\nPress Enter to continue...";
     std::cin.get();
 }
 
-
 static bool handleInputError() {
     printError("Not a number");
     return false;
 }
-
 
 static LazySequence<int>* createNaturals() {
     int init_data[] = { 0 };
@@ -177,7 +127,6 @@ static LazySequence<int>* createNaturals() {
     );
 }
 
-
 static LazySequence<int>* createFibonacci() {
     int init_data[] = { 1, 1 };
     MutableArraySequence<int> init(init_data, 2);
@@ -185,13 +134,11 @@ static LazySequence<int>* createFibonacci() {
     return new LazySequence<int>(
         [](const Sequence<int>& source) {
             int length = source.GetLength();
-
             return source.Get(length - 1) + source.Get(length - 2);
         },
         init
     );
 }
-
 
 static LazySequence<int>* readFiniteLazySequence(const std::string& name) {
     int count;
@@ -215,9 +162,7 @@ static LazySequence<int>* readFiniteLazySequence(const std::string& name) {
         }
 
         LazySequence<int>* result = new LazySequence<int>(data, count);
-
         delete[] data;
-
         return result;
     }
     catch (...) {
@@ -225,7 +170,6 @@ static LazySequence<int>* readFiniteLazySequence(const std::string& name) {
         throw;
     }
 }
-
 
 static LazySequence<int>* chooseLazySequence(const std::string& name) {
     int choice;
@@ -262,7 +206,6 @@ static LazySequence<int>* chooseLazySequence(const std::string& name) {
     }
 }
 
-
 static void printLazyInfo(const LazySequence<int>& sequence) {
     std::cout << "  Type: LazySequence<int>\n";
 
@@ -273,9 +216,9 @@ static void printLazyInfo(const LazySequence<int>& sequence) {
         std::cout << "  Length: " << sequence.GetLength() << "\n";
     }
 
+    std::cout << "  Cardinality: " << sequence.GetCardinality() << "\n";
     std::cout << "  Materialized count: " << sequence.GetMaterializedCount() << "\n";
 }
-
 
 static void printLazyPrefix(LazySequence<int>& sequence, int count) {
     if (count < 0) {
@@ -300,7 +243,6 @@ static void printLazyPrefix(LazySequence<int>& sequence, int count) {
     std::cout << "]\n";
 }
 
-
 static void printStatistics(const OnlineEventStatistics<double>& stats) {
     std::cout << "  Total events:   " << stats.GetTotalEvents() << "\n";
     std::cout << "  START events:   " << stats.GetStartEvents() << "\n";
@@ -323,9 +265,8 @@ static void printStatistics(const OnlineEventStatistics<double>& stats) {
     }
 }
 
-
 static void demoCardinalAndTransfiniteIndex() {
-    printTitle("Cardinal and TransfiniteIndex");
+    printTitle("Cardinal, CardinalIO and TransfiniteIndex");
 
     int finite_length;
 
@@ -337,12 +278,8 @@ static void demoCardinalAndTransfiniteIndex() {
     Cardinal finite = Cardinal::Finite(finite_length);
     Cardinal infinity = Cardinal::Infinity();
 
-    std::cout << "  Cardinal::Finite(" << finite_length << "): ";
-    std::cout << (finite.IsFinite() ? "finite" : "infinite") << ", value = ";
-    std::cout << finite.GetFiniteValue() << "\n";
-
-    std::cout << "  Cardinal::Infinity(): ";
-    std::cout << (infinity.IsInfinite() ? "infinite" : "finite") << "\n";
+    std::cout << "  Cardinal::Finite: " << finite << "\n";
+    std::cout << "  Cardinal::Infinity: " << infinity << "\n";
 
     int usual_index;
     int tail_index;
@@ -368,7 +305,6 @@ static void demoCardinalAndTransfiniteIndex() {
               << omega_index.GetInfinityCount()
               << ", finite_part = " << omega_index.GetFiniteIndex() << "\n";
 }
-
 
 static void demoSequenceGenerator() {
     printTitle("SequenceGenerator");
@@ -404,17 +340,14 @@ static void demoSequenceGenerator() {
     }
 }
 
-
 static void demoRuleGeneratorThroughLazy() {
     printTitle("RuleGenerator through LazySequence");
 
     std::cout << "  RuleGenerator is used inside infinite LazySequence.\n";
-    std::cout << "  Choose the rule and enter how many elements to materialize.\n";
-
-    int choice;
     std::cout << "  1. Naturals\n";
     std::cout << "  2. Fibonacci\n";
 
+    int choice;
     if (!readIntInRange(choice, "Choice: ", 1, 2)) {
         return;
     }
@@ -429,18 +362,9 @@ static void demoRuleGeneratorThroughLazy() {
     LazySequence<int>* sequence = nullptr;
 
     try {
-        if (choice == 1) {
-            sequence = createNaturals();
-        }
-        else {
-            sequence = createFibonacci();
-        }
-
+        sequence = choice == 1 ? createNaturals() : createFibonacci();
         printLazyInfo(*sequence);
         printLazyPrefix(*sequence, count);
-        std::cout << "  Materialized after Get calls: "
-                  << sequence->GetMaterializedCount() << "\n";
-
         delete sequence;
     }
     catch (const std::exception& e) {
@@ -448,7 +372,6 @@ static void demoRuleGeneratorThroughLazy() {
         printError(e.what());
     }
 }
-
 
 static void demoLazyGetAndSubsequence() {
     printTitle("LazySequence Get, GetSubsequence, Enumerator");
@@ -480,8 +403,20 @@ static void demoLazyGetAndSubsequence() {
 
         if (readIntWithPrompt(index, "  Get finite index: ")) {
             try {
-                std::cout << "  Get(" << index << ") = "
-                          << sequence->Get(index) << "\n";
+                std::cout << "  Get(" << index << ") = " << sequence->Get(index) << "\n";
+            }
+            catch (const std::exception& e) {
+                printError(e.what());
+            }
+        }
+
+        int tail_index;
+
+        if (readIntWithPrompt(tail_index, "  Try Get(omega + k), k = ")) {
+            try {
+                std::cout << "  Get(omega + " << tail_index << ") = "
+                          << sequence->Get(TransfiniteIndex::AfterInfinity(tail_index))
+                          << "\n";
             }
             catch (const std::exception& e) {
                 printError(e.what());
@@ -511,9 +446,6 @@ static void demoLazyGetAndSubsequence() {
                 }
             }
         }
-        else {
-            std::cout << "  Subsequence demo skipped for infinite sequence.\n";
-        }
 
         enumerator = sequence->GetEnumerator();
 
@@ -537,7 +469,6 @@ static void demoLazyGetAndSubsequence() {
         printError(e.what());
     }
 }
-
 
 static void demoAppend() {
     printTitle("AppendGenerator");
@@ -571,16 +502,11 @@ static void demoAppend() {
 
         int count;
 
-        if (!readIntWithPrompt(count, "  How many finite elements to print: ") || count < 0) {
-            printError("Count must be non-negative");
-        }
-        else {
+        if (readIntWithPrompt(count, "  How many finite elements to print: ") && count >= 0) {
             printLazyPrefix(*lazy_result, count);
         }
 
         if (lazy_result->IsInfinite()) {
-            std::cout << "  Appended value is in transfinite tail.\n";
-
             try {
                 std::cout << "  Get(omega + 0) = "
                           << lazy_result->Get(TransfiniteIndex::AfterInfinity(0))
@@ -600,7 +526,6 @@ static void demoAppend() {
         printError(e.what());
     }
 }
-
 
 static void demoPrepend() {
     printTitle("PrependGenerator");
@@ -634,10 +559,7 @@ static void demoPrepend() {
 
         int count;
 
-        if (!readIntWithPrompt(count, "  How many elements to print: ") || count < 0) {
-            printError("Count must be non-negative");
-        }
-        else {
+        if (readIntWithPrompt(count, "  How many elements to print: ") && count >= 0) {
             printLazyPrefix(*lazy_result, count);
         }
 
@@ -650,7 +572,6 @@ static void demoPrepend() {
         printError(e.what());
     }
 }
-
 
 static void demoInsertItem() {
     printTitle("InsertItemGenerator");
@@ -691,10 +612,7 @@ static void demoInsertItem() {
 
         int count;
 
-        if (!readIntWithPrompt(count, "  How many elements to print: ") || count < 0) {
-            printError("Count must be non-negative");
-        }
-        else {
+        if (readIntWithPrompt(count, "  How many elements to print: ") && count >= 0) {
             printLazyPrefix(*lazy_result, count);
         }
 
@@ -707,7 +625,6 @@ static void demoInsertItem() {
         printError(e.what());
     }
 }
-
 
 static void demoConcat() {
     printTitle("ConcatGenerator");
@@ -741,10 +658,7 @@ static void demoConcat() {
 
         int count;
 
-        if (!readIntWithPrompt(count, "  How many finite elements to print: ") || count < 0) {
-            printError("Count must be non-negative");
-        }
-        else {
+        if (readIntWithPrompt(count, "  How many finite elements to print: ") && count >= 0) {
             printLazyPrefix(*lazy_result, count);
         }
 
@@ -774,7 +688,6 @@ static void demoConcat() {
         printError(e.what());
     }
 }
-
 
 static void demoInsertSequence() {
     printTitle("InsertSequenceGenerator");
@@ -838,10 +751,7 @@ static void demoInsertSequence() {
 
         int count;
 
-        if (!readIntWithPrompt(count, "  How many finite elements to print: ") || count < 0) {
-            printError("Count must be non-negative");
-        }
-        else {
+        if (readIntWithPrompt(count, "  How many finite elements to print: ") && count >= 0) {
             printLazyPrefix(*result, count);
         }
 
@@ -872,7 +782,6 @@ static void demoInsertSequence() {
     }
 }
 
-
 static void demoAppendDoesNotChangeFibonacci() {
     printTitle("Append does not change Fibonacci rule");
 
@@ -900,8 +809,7 @@ static void demoAppendDoesNotChangeFibonacci() {
         std::cout << "  Finite part after append:\n";
         printLazyPrefix(*lazy_result, 8);
 
-        std::cout << "  Explanation:\n";
-        std::cout << "  Append creates AppendGenerator.\n";
+        std::cout << "  Append creates an operation generator.\n";
         std::cout << "  It does not write item into Fibonacci RuleGenerator history.\n";
         std::cout << "  Therefore after 1, 1, 2, 3, 5 ordinary next value is 8.\n";
         std::cout << "  Appended item is located at omega + 0.\n";
@@ -920,13 +828,12 @@ static void demoAppendDoesNotChangeFibonacci() {
     }
 }
 
-
 static void lazyMenu() {
     int choice;
 
     while (true) {
         printTitle("Lazy sequences and generators");
-        std::cout << "  1. Cardinal and TransfiniteIndex\n";
+        std::cout << "  1. Cardinal / CardinalIO / TransfiniteIndex\n";
         std::cout << "  2. SequenceGenerator directly\n";
         std::cout << "  3. RuleGenerator through infinite LazySequence\n";
         std::cout << "  4. LazySequence Get / Subsequence / Enumerator\n";
@@ -959,7 +866,6 @@ static void lazyMenu() {
     }
 }
 
-
 static void demoSequenceReadOnlyStream() {
     printTitle("SequenceReadOnlyStream");
 
@@ -973,7 +879,6 @@ static void demoSequenceReadOnlyStream() {
         }
 
         SequenceReadOnlyStream<int> stream(sequence);
-
         Stream<int>* base = &stream;
         ReadOnlyStream<int>* reader = &stream;
 
@@ -1005,7 +910,6 @@ static void demoSequenceReadOnlyStream() {
         }
 
         base->Close();
-
         delete sequence;
     }
     catch (const std::exception& e) {
@@ -1013,7 +917,6 @@ static void demoSequenceReadOnlyStream() {
         printError(e.what());
     }
 }
-
 
 static void demoLazyReadOnlyStream() {
     printTitle("LazyReadOnlyStream");
@@ -1028,7 +931,6 @@ static void demoLazyReadOnlyStream() {
         }
 
         LazyReadOnlyStream<int> stream(sequence);
-
         Stream<int>* base = &stream;
         ReadOnlyStream<int>* reader = &stream;
 
@@ -1052,7 +954,6 @@ static void demoLazyReadOnlyStream() {
         }
 
         base->Close();
-
         delete sequence;
     }
     catch (const std::exception& e) {
@@ -1061,6 +962,62 @@ static void demoLazyReadOnlyStream() {
     }
 }
 
+static void demoSequenceWriteOnlyStream() {
+    printTitle("SequenceWriteOnlyStream");
+
+    Sequence<int>* sequence = nullptr;
+
+    try {
+        sequence = new MutableArraySequence<int>();
+
+        SequenceWriteOnlyStream<int> stream(sequence);
+
+        Stream<int>* base = &stream;
+        WriteOnlyStream<int>* writer = &stream;
+
+        base->Open();
+
+        int count;
+
+        if (!readIntWithPrompt(count, "  How many numbers to write: ") || count < 0) {
+            printError("Count must be non-negative");
+            base->Close();
+            delete sequence;
+            return;
+        }
+
+        for (int i = 0; i < count; ++i) {
+            int value;
+
+            while (!readIntWithPrompt(value, "  value[" + std::to_string(i) + "]: ")) {
+                handleInputError();
+            }
+
+            writer->Write(value);
+        }
+
+        std::cout << "  Written count: " << base->GetPosition() << "\n";
+        std::cout << "  Sequence content: ";
+
+        for (int i = 0; i < sequence->GetLength(); ++i) {
+            if (i > 0) {
+                std::cout << ", ";
+            }
+
+            std::cout << sequence->Get(i);
+        }
+
+        std::cout << "\n";
+
+        base->Close();
+
+        delete sequence;
+    }
+    catch (const std::exception& e) {
+        delete sequence;
+        printError(e.what());
+    }
+}
 
 static void demoFileLineReadOnlyStream() {
     printTitle("FileLineReadOnlyStream");
@@ -1090,40 +1047,40 @@ static void demoFileLineReadOnlyStream() {
     }
 }
 
+static void demoFileLineWriteOnlyStream() {
+    printTitle("FileLineWriteOnlyStream");
 
-static void demoWriteOnlyStream() {
-    printTitle("WriteOnlyStream");
-
-    ConsoleWriteOnlyStream<std::string> stream;
-
-    Stream<std::string>* base = &stream;
-    WriteOnlyStream<std::string>* writer = &stream;
+    std::string filename = readLineWithPrompt("  Output file path: ");
 
     try {
+        FileLineWriteOnlyStream stream(filename);
+
+        Stream<std::string>* base = &stream;
+        WriteOnlyStream<std::string>* writer = &stream;
+
         base->Open();
 
         int count;
 
-        if (!readIntWithPrompt(count, "  How many strings to write: ") || count < 0) {
+        if (!readIntWithPrompt(count, "  How many lines to write: ") || count < 0) {
             printError("Count must be non-negative");
             base->Close();
             return;
         }
 
         for (int i = 0; i < count; ++i) {
-            std::string line = readLineWithPrompt("  text[" + std::to_string(i) + "]: ");
-            writer->Write(line + "\n");
+            std::string line = readLineWithPrompt("  line[" + std::to_string(i) + "]: ");
+            writer->Write(line);
         }
 
-        std::cout << "  Written items count: " << base->GetPosition() << "\n";
-
+        std::cout << "  Written lines: " << base->GetPosition() << "\n";
         base->Close();
+        std::cout << "  File written.\n";
     }
     catch (const std::exception& e) {
         printError(e.what());
     }
 }
-
 
 static void streamsMenu() {
     int choice;
@@ -1132,25 +1089,26 @@ static void streamsMenu() {
         printTitle("Streams");
         std::cout << "  1. SequenceReadOnlyStream\n";
         std::cout << "  2. LazyReadOnlyStream\n";
-        std::cout << "  3. FileLineReadOnlyStream\n";
-        std::cout << "  4. WriteOnlyStream\n";
+        std::cout << "  3. SequenceWriteOnlyStream\n";
+        std::cout << "  4. FileLineReadOnlyStream\n";
+        std::cout << "  5. FileLineWriteOnlyStream\n";
         std::cout << "  0. Back\n";
 
-        if (!readIntInRange(choice, "Choice: ", 1, 4)) {
+        if (!readIntInRange(choice, "Choice: ", 1, 5)) {
             return;
         }
 
         switch (choice) {
         case 1: demoSequenceReadOnlyStream(); break;
         case 2: demoLazyReadOnlyStream(); break;
-        case 3: demoFileLineReadOnlyStream(); break;
-        case 4: demoWriteOnlyStream(); break;
+        case 3: demoSequenceWriteOnlyStream(); break;
+        case 4: demoFileLineReadOnlyStream(); break;
+        case 5: demoFileLineWriteOnlyStream(); break;
         }
 
         pauseConsole();
     }
 }
-
 
 static void printEvent(const Event<double>& event) {
     if (event.type == EventType::Start) {
@@ -1173,7 +1131,6 @@ static void printEvent(const Event<double>& event) {
     }
 }
 
-
 static void demoEventParser() {
     printTitle("EventParser");
 
@@ -1193,7 +1150,6 @@ static void demoEventParser() {
         printError(e.what());
     }
 }
-
 
 static void demoEventReadOnlyStream() {
     printTitle("EventReadOnlyStream");
@@ -1218,7 +1174,6 @@ static void demoEventReadOnlyStream() {
         }
 
         lines = new MutableArraySequence<std::string>(data, count);
-
         SequenceReadOnlyStream<std::string> line_stream(lines);
         EventReadOnlyStream<double> event_stream(&line_stream);
 
@@ -1242,12 +1197,10 @@ static void demoEventReadOnlyStream() {
     }
 }
 
-
 static void demoManualOnlineStatistics() {
     printTitle("OnlineEventStatistics");
 
     std::cout << "  Enter event lines. Type STOP to finish.\n";
-
     OnlineEventStatistics<double> stats;
 
     while (true) {
@@ -1263,7 +1216,6 @@ static void demoManualOnlineStatistics() {
 
     printStatistics(stats);
 }
-
 
 static void demoProtocolStatisticsStringStream() {
     printTitle("ProtocolStatisticsTask with string stream");
@@ -1288,12 +1240,9 @@ static void demoProtocolStatisticsStringStream() {
         }
 
         lines = new MutableArraySequence<std::string>(data, count);
-
         SequenceReadOnlyStream<std::string> stream(lines);
 
-        OnlineEventStatistics<double> stats =
-            ProtocolStatisticsTask<double>::Process(stream);
-
+        OnlineEventStatistics<double> stats = ProtocolStatisticsTask<double>::Process(stream);
         printStatistics(stats);
 
         delete lines;
@@ -1305,7 +1254,6 @@ static void demoProtocolStatisticsStringStream() {
         printError(e.what());
     }
 }
-
 
 static void demoProtocolStatisticsFile() {
     printTitle("ProtocolStatisticsTask with file");
@@ -1314,17 +1262,13 @@ static void demoProtocolStatisticsFile() {
 
     try {
         FileLineReadOnlyStream stream(filename);
-
-        OnlineEventStatistics<double> stats =
-            ProtocolStatisticsTask<double>::Process(stream);
-
+        OnlineEventStatistics<double> stats = ProtocolStatisticsTask<double>::Process(stream);
         printStatistics(stats);
     }
     catch (const std::exception& e) {
         printError(e.what());
     }
 }
-
 
 static void demoCreateProtocolFile() {
     printTitle("Create protocol file");
@@ -1337,23 +1281,23 @@ static void demoCreateProtocolFile() {
         return;
     }
 
-    std::ofstream output(filename);
+    FileLineWriteOnlyStream stream(filename);
 
-    if (!output.is_open()) {
-        printError("Cannot create file");
-        return;
+    try {
+        stream.Open();
+
+        for (int i = 0; i < count; ++i) {
+            std::string line = readLineWithPrompt("  line[" + std::to_string(i) + "]: ");
+            stream.Write(line);
+        }
+
+        stream.Close();
+        std::cout << "  File created.\n";
     }
-
-    for (int i = 0; i < count; ++i) {
-        std::string line = readLineWithPrompt("  line[" + std::to_string(i) + "]: ");
-        output << line << "\n";
+    catch (const std::exception& e) {
+        printError(e.what());
     }
-
-    output.close();
-
-    std::cout << "  File created.\n";
 }
-
 
 static void eventsMenu() {
     int choice;
@@ -1384,7 +1328,6 @@ static void eventsMenu() {
         pauseConsole();
     }
 }
-
 
 int main() {
     setupConsole();
