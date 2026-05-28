@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -12,9 +11,9 @@
 #include "lazy/Cardinal.h"
 #include "lazy/CardinalIO.h"
 #include "lazy/TransfiniteIndex.h"
-#include "lazy/Generator.h"
-#include "lazy/RuleGenerator.h"
-#include "lazy/SequenceGenerator.h"
+#include "generators/Generator.h"
+#include "generators/RuleGenerator.h"
+#include "generators/SequenceGenerator.h"
 #include "lazy/LazySequence.h"
 
 #include "streams/Stream.h"

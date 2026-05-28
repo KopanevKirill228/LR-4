@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Generator.h"
-#include "Cardinal.h"
-#include "TransfiniteIndex.h"
+#include "../lazy/Cardinal.h"
+#include "../lazy/TransfiniteIndex.h"
 
 #include <stdexcept>
 
@@ -57,7 +57,7 @@ public:
 
     T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
 
-    Cardinal GetResultCardinality() const;
+    Cardinal GetResultCardinality() const override;
 };
 
 #include "InsertSequenceGenerator.tpp"

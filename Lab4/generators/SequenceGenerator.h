@@ -28,6 +28,8 @@ public:
     void Reset() override;
 
     Generator<T>* Clone() const override;
+
+    Cardinal GetResultCardinality() const override;
 };
 
 #include "SequenceGenerator.tpp"

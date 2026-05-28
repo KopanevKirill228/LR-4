@@ -78,3 +78,8 @@ template <class T>
 Generator<T>* SequenceGenerator<T>::Clone() const {
     return new SequenceGenerator<T>(*this);
 }
+
+template <class T>
+Cardinal SequenceGenerator<T>::GetResultCardinality() const {
+    return Cardinal::Finite(source_->GetLength());
+}

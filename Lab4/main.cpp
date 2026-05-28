@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <string>
 #include <limits>
@@ -14,7 +13,7 @@
 #include "lazy/Cardinal.h"
 #include "lazy/CardinalIO.h"
 #include "lazy/TransfiniteIndex.h"
-#include "lazy/SequenceGenerator.h"
+#include "generators/SequenceGenerator.h"
 #include "lazy/LazySequence.h"
 
 #include "streams/Stream.h"

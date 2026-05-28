@@ -4,9 +4,10 @@
 #include "../lib/ArraySequence.h"
 #include "../lib/IEnumerator.h"
 
-#include "Generator.h"
-#include "RuleGenerator.h"
-#include "SequenceGenerator.h"
+#include "../generators/Generator.h"
+#include "../generators/RuleGenerator.h"
+#include "../generators/SequenceGenerator.h"
+
 #include "Cardinal.h"
 #include "TransfiniteIndex.h"
 

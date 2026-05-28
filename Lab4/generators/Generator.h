@@ -1,7 +1,8 @@
 #pragma once
 
 #include "../lib/Sequence.h"
-#include "TransfiniteIndex.h"
+#include "../lazy/Cardinal.h"
+#include "../lazy/TransfiniteIndex.h"
 #include <stdexcept>
 
 
@@ -24,4 +25,6 @@ public:
     virtual T GetByTransfiniteIndex(const TransfiniteIndex& index) const {
         throw std::logic_error("Generator: transfinite index is not supported");
     }
+
+    virtual Cardinal GetResultCardinality() const = 0;
 };

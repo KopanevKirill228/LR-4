@@ -84,3 +84,8 @@ template <class T>
 Generator<T>* RuleGenerator<T>::Clone() const {
     return new RuleGenerator<T>(*this);
 }
+
+template <class T>
+Cardinal RuleGenerator<T>::GetResultCardinality() const {
+    return Cardinal::Infinity();
+}

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Generator.h"
-#include "Cardinal.h"
-#include "TransfiniteIndex.h"
+#include "../lazy/Cardinal.h"
+#include "../lazy/TransfiniteIndex.h"
 
 #include <stdexcept>
 
@@ -12,7 +12,7 @@ class LazySequence;
 
 
 template <class T>
-class AppendGenerator : public Generator<T> {
+class PrependGenerator : public Generator<T> {
 private:
     LazySequence<T>* source_;
     T* item_;
@@ -23,16 +23,16 @@ private:
     int position_;
 
 public:
-    AppendGenerator(
+    PrependGenerator(
         const LazySequence<T>& source,
         const T& item
     );
 
-    AppendGenerator(const AppendGenerator<T>& other);
+    PrependGenerator(const PrependGenerator<T>& other);
 
-    AppendGenerator<T>& operator=(const AppendGenerator<T>& other);
+    PrependGenerator<T>& operator=(const PrependGenerator<T>& other);
 
-    ~AppendGenerator() override;
+    ~PrependGenerator() override;
 
     bool HasNext() const override;
     T GetNext() override;
@@ -47,7 +47,7 @@ public:
 
     T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
 
-    Cardinal GetResultCardinality() const;
+    Cardinal GetResultCardinality() const override;
 };
 
-#include "AppendGenerator.tpp"
+#include "PrependGenerator.tpp"

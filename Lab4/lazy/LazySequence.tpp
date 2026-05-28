@@ -1,13 +1,12 @@
 #pragma once
 
 #include "LazySequence.h"
-#include "ConcatGenerator.h"
-#include "InsertSequenceGenerator.h"
-#include "ConcatGenerator.h"
-#include "InsertSequenceGenerator.h"
-#include "AppendGenerator.h"
-#include "PrependGenerator.h"
-#include "InsertItemGenerator.h"
+
+#include "../generators/AppendGenerator.h"
+#include "../generators/PrependGenerator.h"
+#include "../generators/InsertItemGenerator.h"
+#include "../generators/ConcatGenerator.h"
+#include "../generators/InsertSequenceGenerator.h"
 
 
 template <class T>
@@ -380,8 +379,7 @@ Sequence<T>* LazySequence<T>::Append(const T& item) {
     try {
         new_generator = new AppendGenerator<T>(*this, item);
 
-        Cardinal result_cardinality =
-            static_cast<AppendGenerator<T>*>(new_generator)->GetResultCardinality();
+        Cardinal result_cardinality = new_generator->GetResultCardinality();
 
         return new LazySequence<T>(
             new_generator,
@@ -402,8 +400,7 @@ Sequence<T>* LazySequence<T>::Prepend(const T& item) {
     try {
         new_generator = new PrependGenerator<T>(*this, item);
 
-        Cardinal result_cardinality =
-            static_cast<PrependGenerator<T>*>(new_generator)->GetResultCardinality();
+        Cardinal result_cardinality = new_generator->GetResultCardinality();
 
         return new LazySequence<T>(
             new_generator,
@@ -429,8 +426,7 @@ Sequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
             index
         );
 
-        Cardinal result_cardinality =
-            static_cast<InsertItemGenerator<T>*>(new_generator)->GetResultCardinality();
+        Cardinal result_cardinality = new_generator->GetResultCardinality();
 
         return new LazySequence<T>(
             new_generator,
@@ -474,8 +470,7 @@ LazySequence<T>* LazySequence<T>::InsertSequenceAt(
             index
         );
 
-        Cardinal result_cardinality =
-            static_cast<InsertSequenceGenerator<T>*>(new_generator)->GetResultCardinality();
+        Cardinal result_cardinality = new_generator->GetResultCardinality();
 
         return new LazySequence<T>(
             new_generator,
@@ -505,13 +500,9 @@ Sequence<T>* LazySequence<T>::Concat(const Sequence<T>& other) const {
             right = converted_other;
         }
 
-        new_generator = new ConcatGenerator<T>(
-            *this,
-            *right
-        );
+        new_generator = new ConcatGenerator<T>(*this, *right);
 
-        Cardinal result_cardinality =
-            static_cast<ConcatGenerator<T>*>(new_generator)->GetResultCardinality();
+        Cardinal result_cardinality = new_generator->GetResultCardinality();
 
         LazySequence<T>* result = new LazySequence<T>(
             new_generator,
