@@ -83,3 +83,8 @@ template <class T>
 Cardinal SequenceGenerator<T>::GetResultCardinality() const {
     return Cardinal::Finite(source_->GetLength());
 }
+
+template <class T>
+TransfiniteLength SequenceGenerator<T>::GetResultLength() const {
+    return TransfiniteLength::Finite(source_->GetLength());
+}

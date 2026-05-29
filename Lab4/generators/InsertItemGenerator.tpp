@@ -152,6 +152,16 @@ Generator<T>* InsertItemGenerator<T>::Clone() const {
 
 
 template <class T>
+T InsertItemGenerator<T>::GetAfterInfinite(int index) const {
+    if (index < 0) {
+        throw std::out_of_range("InsertItemGenerator: after-infinity index is negative");
+    }
+
+    return GetByTransfiniteIndex(TransfiniteIndex::AfterInfinity(index));
+}
+
+
+template <class T>
 T InsertItemGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) const {
     if (index.IsFinite()) {
         int finite_index = index.GetFiniteIndex();
@@ -174,4 +184,15 @@ T InsertItemGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) c
 template <class T>
 Cardinal InsertItemGenerator<T>::GetResultCardinality() const {
     return result_length_;
+}
+
+template <class T>
+TransfiniteLength InsertItemGenerator<T>::GetResultLength() const {
+    TransfiniteLength source_length = source_->GetTransfiniteLength();
+
+    if (source_length.IsInfinite()) {
+        return source_length;
+    }
+
+    return TransfiniteLength::Finite(source_length.GetFiniteCount() + 1);
 }

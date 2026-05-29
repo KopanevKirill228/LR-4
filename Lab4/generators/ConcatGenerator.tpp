@@ -20,6 +20,14 @@ ConcatGenerator<T>::ConcatGenerator(
     first_length_(first.GetCardinality()),
     second_length_(second.GetCardinality()),
     result_length_(ConcatAddCardinal(first.GetCardinality(), second.GetCardinality())),
+    first_transfinite_length_(first.GetTransfiniteLength()),
+    second_transfinite_length_(second.GetTransfiniteLength()),
+    result_transfinite_length_(
+        TransfiniteLength::Add(
+            first.GetTransfiniteLength(),
+            second.GetTransfiniteLength()
+        )
+    ),
     position_(0) {
 }
 
@@ -31,6 +39,9 @@ ConcatGenerator<T>::ConcatGenerator(const ConcatGenerator<T>& other)
     first_length_(other.first_length_),
     second_length_(other.second_length_),
     result_length_(other.result_length_),
+    first_transfinite_length_(other.first_transfinite_length_),
+    second_transfinite_length_(other.second_transfinite_length_),
+    result_transfinite_length_(other.result_transfinite_length_),
     position_(other.position_) {
 }
 
@@ -41,23 +52,20 @@ ConcatGenerator<T>& ConcatGenerator<T>::operator=(const ConcatGenerator<T>& othe
         return *this;
     }
 
-    LazySequence<T>* new_first = other.first_ == nullptr
-        ? nullptr
-        : new LazySequence<T>(*other.first_);
-
-    LazySequence<T>* new_second = other.second_ == nullptr
-        ? nullptr
-        : new LazySequence<T>(*other.second_);
-
     delete first_;
     delete second_;
 
-    first_ = new_first;
-    second_ = new_second;
+    first_ = other.first_ == nullptr ? nullptr : new LazySequence<T>(*other.first_);
+    second_ = other.second_ == nullptr ? nullptr : new LazySequence<T>(*other.second_);
 
     first_length_ = other.first_length_;
     second_length_ = other.second_length_;
     result_length_ = other.result_length_;
+
+    first_transfinite_length_ = other.first_transfinite_length_;
+    second_transfinite_length_ = other.second_transfinite_length_;
+    result_transfinite_length_ = other.result_transfinite_length_;
+
     position_ = other.position_;
 
     return *this;
@@ -133,63 +141,59 @@ Generator<T>* ConcatGenerator<T>::Clone() const {
 
 
 template <class T>
-T ConcatGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) const {
-    if (index.IsFinite()) {
-        int finite_index = index.GetFiniteIndex();
-
-        if (first_length_.IsInfinite()) {
-            return first_->Get(finite_index);
-        }
-
-        int first_length = first_length_.GetFiniteValue();
-
-        if (finite_index < first_length) {
-            return first_->Get(finite_index);
-        }
-
-        return second_->Get(finite_index - first_length);
+T ConcatGenerator<T>::GetAfterInfinite(int index) const {
+    if (index < 0) {
+        throw std::out_of_range("ConcatGenerator: after-infinity index is negative");
     }
-
-    int infinity_count = index.GetInfinityCount();
-    int tail_index = index.GetFiniteIndex();
 
     if (first_length_.IsInfinite()) {
-        if (infinity_count == 1) {
-            int used_by_first = 0;
+        int used_by_first = 0;
 
-            while (used_by_first <= tail_index) {
-                try {
-                    T value = first_->Get(
-                        TransfiniteIndex::AfterInfinity(used_by_first)
-                    );
+        while (used_by_first <= index) {
+            try {
+                T value = first_->GetAfterInfinite(used_by_first);
 
-                    if (used_by_first == tail_index) {
-                        return value;
-                    }
-
-                    ++used_by_first;
+                if (used_by_first == index) {
+                    return value;
                 }
-                catch (...) {
-                    return second_->Get(tail_index - used_by_first);
-                }
+
+                ++used_by_first;
             }
-        }
-
-        try {
-            return first_->Get(index);
-        }
-        catch (...) {
-            return second_->Get(
-                TransfiniteIndex(infinity_count - 1, tail_index)
-            );
+            catch (...) {
+                return second_->Get(index - used_by_first);
+            }
         }
     }
 
-    return second_->Get(index);
+    return second_->GetAfterInfinite(index);
 }
 
+template <class T>
+T ConcatGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) const {
+    if (first_transfinite_length_.Contains(index)) {
+        if (index.IsFinite()) {
+            return first_->Get(index.GetFiniteIndex());
+        }
+
+        return first_->Get(index);
+    }
+
+    TransfiniteIndex second_index =
+        first_transfinite_length_.SubtractFrom(index);
+
+    if (second_index.IsFinite()) {
+        return second_->Get(second_index.GetFiniteIndex());
+    }
+
+    return second_->Get(second_index);
+}
 
 template <class T>
 Cardinal ConcatGenerator<T>::GetResultCardinality() const {
     return result_length_;
+}
+
+template <class T>
+TransfiniteLength ConcatGenerator<T>::GetResultLength() const {
+    return result_transfinite_length_;
 }

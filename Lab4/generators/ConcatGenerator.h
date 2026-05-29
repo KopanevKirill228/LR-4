@@ -21,6 +21,10 @@ private:
     Cardinal second_length_;
     Cardinal result_length_;
 
+    TransfiniteLength first_transfinite_length_;
+    TransfiniteLength second_transfinite_length_;
+    TransfiniteLength result_transfinite_length_;
+
     int position_;
 
 public:
@@ -48,7 +52,11 @@ public:
 
     T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
 
+    T GetAfterInfinite(int index) const override;
+
     Cardinal GetResultCardinality() const override;
+
+    TransfiniteLength GetResultLength() const override;
 };
 
 #include "ConcatGenerator.tpp"

@@ -89,3 +89,8 @@ template <class T>
 Cardinal RuleGenerator<T>::GetResultCardinality() const {
     return Cardinal::Infinity();
 }
+
+template <class T>
+TransfiniteLength RuleGenerator<T>::GetResultLength() const {
+    return TransfiniteLength::Omega();
+}

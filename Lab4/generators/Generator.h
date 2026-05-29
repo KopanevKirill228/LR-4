@@ -26,5 +26,13 @@ public:
         throw std::logic_error("Generator: transfinite index is not supported");
     }
 
+    virtual T GetAfterInfinite(int index) const {
+        throw std::logic_error("Generator: after-infinity index is not supported");
+
+        return GetByTransfiniteIndex(TransfiniteIndex::AfterInfinity(index));
+    }
+
     virtual Cardinal GetResultCardinality() const = 0;
+
+    virtual TransfiniteLength GetResultLength() const = 0;
 };

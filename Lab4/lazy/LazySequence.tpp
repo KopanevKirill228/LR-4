@@ -322,6 +322,19 @@ Cardinal LazySequence<T>::GetCardinality() const {
     return Cardinal::Finite(finite_length_);
 }
 
+template <class T>
+TransfiniteLength LazySequence<T>::GetTransfiniteLength() const {
+    if (!is_infinite_) {
+        return TransfiniteLength::Finite(finite_length_);
+    }
+
+    if (generator_ == nullptr) {
+        throw std::logic_error("LazySequence: infinite sequence has no generator");
+    }
+
+    return generator_->GetResultLength();
+}
+
 
 template <class T>
 int LazySequence<T>::GetMaterializedCount() const {
@@ -337,12 +350,20 @@ bool LazySequence<T>::IsInfinite() const {
 
 template <class T>
 T LazySequence<T>::GetAfterInfinite(int index) const {
-    return Get(TransfiniteIndex::AfterInfinity(index));
+    if (index < 0) {
+        throw std::out_of_range("LazySequence: after-infinity index is negative");
+    }
+
+    if (generator_ == nullptr) {
+        throw std::logic_error("LazySequence: after-infinity index is not supported");
+    }
+
+    return generator_->GetAfterInfinite(index);
 }
 
 
 template <class T>
-Sequence<T>* LazySequence<T>::GetSubsequence(int startIndex, int endIndex) const {
+LazySequence<T>* LazySequence<T>::GetSubsequence(int startIndex, int endIndex) const {
     if (startIndex < 0 || endIndex < 0) {
         throw std::out_of_range("LazySequence: subsequence index is negative");
     }
@@ -373,7 +394,7 @@ Sequence<T>* LazySequence<T>::GetSubsequence(int startIndex, int endIndex) const
 
 
 template <class T>
-Sequence<T>* LazySequence<T>::Append(const T& item) {
+LazySequence<T>* LazySequence<T>::Append(const T& item) {
     Generator<T>* new_generator = nullptr;
 
     try {
@@ -394,7 +415,7 @@ Sequence<T>* LazySequence<T>::Append(const T& item) {
 }
 
 template <class T>
-Sequence<T>* LazySequence<T>::Prepend(const T& item) {
+LazySequence<T>* LazySequence<T>::Prepend(const T& item) {
     Generator<T>* new_generator = nullptr;
 
     try {
@@ -416,7 +437,7 @@ Sequence<T>* LazySequence<T>::Prepend(const T& item) {
 
 
 template <class T>
-Sequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
+LazySequence<T>* LazySequence<T>::InsertAt(const T& item, int index) {
     Generator<T>* new_generator = nullptr;
 
     try {
@@ -486,39 +507,30 @@ LazySequence<T>* LazySequence<T>::InsertSequenceAt(
 
 
 template <class T>
-Sequence<T>* LazySequence<T>::Concat(const Sequence<T>& other) const {
-    const LazySequence<T>* lazy_other = dynamic_cast<const LazySequence<T>*>(&other);
-
-    LazySequence<T>* converted_other = nullptr;
-    const LazySequence<T>* right = lazy_other;
-
+LazySequence<T>* LazySequence<T>::Concat(const LazySequence<T>& other) const {
     Generator<T>* new_generator = nullptr;
 
     try {
-        if (right == nullptr) {
-            converted_other = new LazySequence<T>(other);
-            right = converted_other;
-        }
-
-        new_generator = new ConcatGenerator<T>(*this, *right);
+        new_generator = new ConcatGenerator<T>(*this, other);
 
         Cardinal result_cardinality = new_generator->GetResultCardinality();
 
-        LazySequence<T>* result = new LazySequence<T>(
+        return new LazySequence<T>(
             new_generator,
             result_cardinality.IsInfinite(),
             result_cardinality.IsInfinite() ? -1 : result_cardinality.GetFiniteValue()
         );
-
-        delete converted_other;
-
-        return result;
     }
     catch (...) {
-        delete converted_other;
         delete new_generator;
         throw;
     }
+}
+
+template <class T>
+LazySequence<T>* LazySequence<T>::Concat(const Sequence<T>& other) const {
+    LazySequence<T> converted_other(other);
+    return Concat(converted_other);
 }
 
 
@@ -529,7 +541,7 @@ T LazySequence<T>::operator[](int index) const {
 
 
 template <class T>
-Sequence<T>* LazySequence<T>::operator+(const Sequence<T>& other) const {
+LazySequence<T>* LazySequence<T>::operator+(const Sequence<T>& other) const {
     return Concat(other);
 }
 

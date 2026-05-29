@@ -20,6 +20,9 @@ private:
     Cardinal source_length_;
     Cardinal result_length_;
 
+    TransfiniteLength source_transfinite_length_;
+    TransfiniteLength result_transfinite_length_;
+
     int position_;
 
 public:
@@ -47,7 +50,11 @@ public:
 
     T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
 
+    T GetAfterInfinite(int index) const override;
+
     Cardinal GetResultCardinality() const override;
+
+    TransfiniteLength GetResultLength() const override;
 };
 
 #include "AppendGenerator.tpp"

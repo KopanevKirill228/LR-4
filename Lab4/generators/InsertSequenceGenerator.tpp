@@ -35,6 +35,9 @@ InsertSequenceGenerator<T>::InsertSequenceGenerator(
     source_length_(source.GetCardinality()),
     inserted_length_(inserted.GetCardinality()),
     result_length_(InsertAddCardinal(source.GetCardinality(), inserted.GetCardinality())),
+    source_transfinite_length_(source.GetTransfiniteLength()),
+    inserted_transfinite_length_(inserted.GetTransfiniteLength()),
+    result_transfinite_length_(TransfiniteLength::Finite(0)),
     index_(index),
     position_(0)
 {
@@ -64,6 +67,8 @@ InsertSequenceGenerator<T>::InsertSequenceGenerator(
             );
         }
     }
+
+    result_transfinite_length_ = GetResultLength();
 }
 
 
@@ -76,10 +81,12 @@ InsertSequenceGenerator<T>::InsertSequenceGenerator(
     source_length_(other.source_length_),
     inserted_length_(other.inserted_length_),
     result_length_(other.result_length_),
+    source_transfinite_length_(other.source_transfinite_length_),
+    inserted_transfinite_length_(other.inserted_transfinite_length_),
+    result_transfinite_length_(other.result_transfinite_length_),
     index_(other.index_),
     position_(other.position_) {
 }
-
 
 template <class T>
 InsertSequenceGenerator<T>& InsertSequenceGenerator<T>::operator=(
@@ -108,6 +115,9 @@ InsertSequenceGenerator<T>& InsertSequenceGenerator<T>::operator=(
     result_length_ = other.result_length_;
     index_ = other.index_;
     position_ = other.position_;
+    source_transfinite_length_ = other.source_transfinite_length_;
+    inserted_transfinite_length_ = other.inserted_transfinite_length_;
+    result_transfinite_length_ = other.result_transfinite_length_;
 
     return *this;
 }
@@ -192,92 +202,160 @@ Generator<T>* InsertSequenceGenerator<T>::Clone() const {
 
 
 template <class T>
+T InsertSequenceGenerator<T>::GetAfterInfinite(int index) const {
+    if (index < 0) {
+        throw std::out_of_range("InsertSequenceGenerator: after-infinity index is negative");
+    }
+
+    return GetByTransfiniteIndex(
+        TransfiniteIndex::AfterInfinity(index)
+    );
+}
+
+
+template <class T>
 T InsertSequenceGenerator<T>::GetByTransfiniteIndex(
     const TransfiniteIndex& index
 ) const {
-    if (index.IsFinite()) {
-        int finite_index = index.GetFiniteIndex();
-
-        if (index_.IsAfterInfinity()) {
-            return source_->Get(finite_index);
-        }
-
+    if (index_.IsFinite()) {
         int insert_index = index_.GetFiniteIndex();
 
-        if (finite_index < insert_index) {
-            return source_->Get(finite_index);
+        if (index.IsFinite()) {
+            int finite_index = index.GetFiniteIndex();
+
+            if (finite_index < insert_index) {
+                return source_->Get(finite_index);
+            }
+
+            int inserted_finite_index = finite_index - insert_index;
+
+            if (inserted_transfinite_length_.IsFinite()) {
+                int inserted_count = inserted_transfinite_length_.GetFiniteCount();
+
+                if (inserted_finite_index < inserted_count) {
+                    return inserted_->Get(inserted_finite_index);
+                }
+
+                return source_->Get(finite_index - inserted_count);
+            }
+
+            return inserted_->Get(inserted_finite_index);
         }
 
-        if (inserted_length_.IsInfinite()) {
-            return inserted_->Get(finite_index - insert_index);
+        if (inserted_transfinite_length_.Contains(index)) {
+            if (index.IsFinite()) {
+                return inserted_->Get(index.GetFiniteIndex());
+            }
+
+            return inserted_->Get(index);
         }
 
-        int inserted_length = inserted_length_.GetFiniteValue();
+        TransfiniteIndex after_inserted =
+            inserted_transfinite_length_.SubtractFrom(index);
 
-        if (finite_index < insert_index + inserted_length) {
-            return inserted_->Get(finite_index - insert_index);
+        if (after_inserted.IsFinite()) {
+            return source_->Get(
+                insert_index + after_inserted.GetFiniteIndex()
+            );
         }
 
-        return source_->Get(finite_index - inserted_length);
+        return source_->Get(after_inserted);
     }
 
-    int tail_index = index.GetFiniteIndex();
+    if (index.IsFinite()) {
+        return source_->Get(index.GetFiniteIndex());
+    }
 
-    if (index_.IsAfterInfinity()) {
-        int insert_infinity = index_.GetInfinityCount();
-        int insert_offset = index_.GetFiniteIndex();
+    int insert_infinity = index_.GetInfinityCount();
+    int insert_offset = index_.GetFiniteIndex();
 
-        if (index.GetInfinityCount() < insert_infinity) {
-            return source_->Get(index);
-        }
+    int query_infinity = index.GetInfinityCount();
+    int query_offset = index.GetFiniteIndex();
 
-        if (index.GetInfinityCount() == insert_infinity) {
-            if (tail_index < insert_offset) {
-                return source_->Get(index);
-            }
-
-            if (inserted_length_.IsInfinite()) {
-                return inserted_->Get(tail_index - insert_offset);
-            }
-
-            int inserted_length = inserted_length_.GetFiniteValue();
-
-            if (tail_index < insert_offset + inserted_length) {
-                return inserted_->Get(tail_index - insert_offset);
-            }
-
-            return source_->Get(
-                TransfiniteIndex(insert_infinity, tail_index - inserted_length)
-            );
-        }
-
-        if (inserted_length_.IsInfinite() &&
-            index.GetInfinityCount() == insert_infinity + 1) {
-            return source_->Get(
-                TransfiniteIndex(insert_infinity, insert_offset + tail_index)
-            );
-        }
-
+    if (query_infinity < insert_infinity) {
         return source_->Get(index);
     }
 
-    int insert_index = index_.GetFiniteIndex();
+    if (query_infinity == insert_infinity && query_offset < insert_offset) {
+        return source_->Get(index);
+    }
 
-    if (inserted_length_.IsInfinite()) {
-        if (index.GetInfinityCount() == 1) {
-            return source_->Get(insert_index + tail_index);
+    TransfiniteIndex inserted_index =
+        query_infinity == insert_infinity
+        ? TransfiniteIndex::Finite(query_offset - insert_offset)
+        : TransfiniteIndex(
+            query_infinity - insert_infinity,
+            query_offset
+        );
+
+    if (inserted_transfinite_length_.Contains(inserted_index)) {
+        if (inserted_index.IsFinite()) {
+            return inserted_->Get(inserted_index.GetFiniteIndex());
         }
 
+        return inserted_->Get(inserted_index);
+    }
+
+    TransfiniteIndex after_inserted =
+        inserted_transfinite_length_.SubtractFrom(inserted_index);
+
+    if (after_inserted.IsFinite()) {
         return source_->Get(
-            TransfiniteIndex(index.GetInfinityCount() - 1, tail_index)
+            TransfiniteIndex(
+                insert_infinity,
+                insert_offset + after_inserted.GetFiniteIndex()
+            )
         );
     }
 
-    return source_->Get(index);
+    return source_->Get(
+        TransfiniteIndex(
+            insert_infinity + after_inserted.GetInfinityCount(),
+            after_inserted.GetFiniteIndex()
+        )
+    );
 }
 
 
 template <class T>
 Cardinal InsertSequenceGenerator<T>::GetResultCardinality() const {
     return result_length_;
+}
+
+template <class T>
+TransfiniteLength InsertSequenceGenerator<T>::GetResultLength() const {
+    if (index_.IsFinite()) {
+        int insert_index = index_.GetFiniteIndex();
+
+        if (source_transfinite_length_.IsFinite()) {
+            if (inserted_transfinite_length_.IsFinite()) {
+                return TransfiniteLength::Finite(
+                    source_transfinite_length_.GetFiniteCount()
+                    + inserted_transfinite_length_.GetFiniteCount()
+                );
+            }
+
+            int tail_count =
+                source_transfinite_length_.GetFiniteCount() - insert_index;
+
+            return TransfiniteLength::Add(
+                inserted_transfinite_length_,
+                TransfiniteLength::Finite(tail_count)
+            );
+        }
+
+        if (inserted_transfinite_length_.IsFinite()) {
+            return source_transfinite_length_;
+        }
+
+        return TransfiniteLength::Add(
+            inserted_transfinite_length_,
+            source_transfinite_length_
+        );
+    }
+
+    return TransfiniteLength::Add(
+        source_transfinite_length_,
+        inserted_transfinite_length_
+    );
 }

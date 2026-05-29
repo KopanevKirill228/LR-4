@@ -33,6 +33,8 @@
 #include "tasks/OnlineEventStatistics.h"
 #include "tasks/ProtocolStatisticsTask.h"
 
+#include "event_batch_processing/EventBatchProcessingTask.h"
+
 static int total = 0;
 static int failed = 0;
 
@@ -76,6 +78,22 @@ static LazySequence<int>* CreateNaturals() {
         },
         init
     );
+}
+
+static LazySequence<int>* CreateThreeNaturalsConcat() {
+    LazySequence<int>* first = CreateNaturals();
+    LazySequence<int>* second = CreateNaturals();
+    LazySequence<int>* third = CreateNaturals();
+
+    LazySequence<int>* first_two = first->Concat(*second);
+    LazySequence<int>* all_three = first_two->Concat(*third);
+
+    delete first_two;
+    delete third;
+    delete second;
+    delete first;
+
+    return all_three;
 }
 
 static LazySequence<int>* CreateFibonacciFromZeroOne() {
@@ -857,6 +875,310 @@ void test_ProtocolStatisticsTaskWithFile() {
     std::remove(filename);
 }
 
+
+void test_EventBatchProcessingTask() {
+    SUITE("EventBatchProcessingTask");
+
+    const char* filename = "test_event_batch_processing.txt";
+
+    {
+        FileLineWriteOnlyStream writer(filename);
+        writer.Open();
+        writer.Write("START");
+        writer.Write("MEASURE 10");
+        writer.Write("MEASURE 20");
+        writer.Write("ERROR sensor");
+        writer.Write("MEASURE 30");
+        writer.Write("END");
+        writer.Close();
+    }
+
+    FileLineReadOnlyStream reader(filename);
+
+    OnlineEventStatistics<double> stats =
+        EventBatchProcessingTask<double>::Process(
+            reader,
+            2,
+            [](const double& value) {
+                return value * 2.0;
+            }
+        );
+
+    CHECK("batch map total", stats.GetTotalEvents() == 6);
+    CHECK("batch map start", stats.GetStartEvents() == 1);
+    CHECK("batch map measure", stats.GetMeasureEvents() == 3);
+    CHECK("batch map error", stats.GetErrorEvents() == 1);
+    CHECK("batch map end", stats.GetEndEvents() == 1);
+
+    CHECK_NEAR("batch map min", stats.GetMinMeasure(), 20.0);
+    CHECK_NEAR("batch map max", stats.GetMaxMeasure(), 60.0);
+    CHECK_NEAR("batch map average", stats.GetAverageMeasure(), 40.0);
+    CHECK_NEAR("batch map median", stats.GetMedianMeasure(), 40.0);
+    CHECK_NEAR("batch map variance", stats.GetVarianceMeasure(), 800.0 / 3.0);
+
+    std::remove(filename);
+}
+
+
+void test_ThreeConcat() {
+    SUITE("Three concat with transfinite indexes");
+
+    LazySequence<int>* first = CreateNaturals();
+    LazySequence<int>* second = CreateNaturals();
+    LazySequence<int>* third = CreateNaturals();
+
+    LazySequence<int>* first_two = first->Concat(*second);
+    LazySequence<int>* all_three = first_two->Concat(*third);
+
+    CHECK("three concat ordinary 0", all_three->Get(0) == 0);
+    CHECK("three concat ordinary 5", all_three->Get(5) == 5);
+
+    CHECK(
+        "three concat omega + 0",
+        all_three->Get(TransfiniteIndex::AfterInfinity(0)) == 0
+    );
+
+    CHECK(
+        "three concat omega + 3",
+        all_three->Get(TransfiniteIndex::AfterInfinity(3)) == 3
+    );
+
+    CHECK(
+        "three concat 2 omega + 0",
+        all_three->Get(TransfiniteIndex(2, 0)) == 0
+    );
+
+    CHECK(
+        "three concat 2 omega + 3",
+        all_three->Get(TransfiniteIndex(2, 3)) == 3
+    );
+
+    CHECK(
+        "three concat 2 omega + 10",
+        all_three->Get(TransfiniteIndex(2, 10)) == 10
+    );
+
+    delete all_three;
+    delete first_two;
+    delete third;
+    delete second;
+    delete first;
+}
+
+void test_InsertThreeConcatIntoFinite() {
+    SUITE("Insert three concat into finite");
+
+    int data[] = { 10, 20, 30 };
+    LazySequence<int> finite(data, 3);
+
+    LazySequence<int>* inserted = CreateThreeNaturalsConcat();
+
+    LazySequence<int>* result = finite.InsertSequenceAt(*inserted, 1);
+
+    CHECK("insert sequence finite prefix", result->Get(0) == 10);
+    CHECK("insert sequence first infinite block", result->Get(1) == 0);
+    CHECK("insert sequence first infinite block 5", result->Get(6) == 5);
+
+    CHECK("insert sequence omega + 3",
+        result->Get(TransfiniteIndex::AfterInfinity(3)) == 3);
+
+    CHECK("insert sequence 2 omega + 3",
+        result->Get(TransfiniteIndex(2, 3)) == 3);
+
+    CHECK("insert sequence finite tail after 3 omega first",
+        result->Get(TransfiniteIndex(3, 0)) == 20);
+
+    CHECK("insert sequence finite tail after 3 omega second",
+        result->Get(TransfiniteIndex(3, 1)) == 30);
+
+    CHECK_THROWS("insert sequence after finite tail throws",
+        result->Get(TransfiniteIndex(3, 2)));
+
+    delete result;
+    delete inserted;
+}
+
+void test_AllGeneratorsWithMultipleInfinities() {
+    SUITE("All generators with multiple infinities");
+
+    auto checkFinite = [](const char* desc, LazySequence<int>* sequence, int index, int expected) {
+        try {
+            int value = sequence->Get(index);
+            CHECK(desc, value == expected);
+        }
+        catch (const std::exception& e) {
+            std::cout << "  [EXCEPTION] " << desc << ": " << e.what() << "\n";
+            CHECK(desc, false);
+        }
+        };
+
+    auto checkTransfinite = [](const char* desc, LazySequence<int>* sequence, const TransfiniteIndex& index, int expected) {
+        try {
+            int value = sequence->Get(index);
+            CHECK(desc, value == expected);
+        }
+        catch (const std::exception& e) {
+            std::cout << "  [EXCEPTION] " << desc << ": " << e.what() << "\n";
+            CHECK(desc, false);
+        }
+        };
+
+    auto createThreeNaturals = []() -> LazySequence<int>*{
+        LazySequence<int>* first = CreateNaturals();
+        LazySequence<int>* second = CreateNaturals();
+        LazySequence<int>* third = CreateNaturals();
+
+        LazySequence<int>* first_two = first->Concat(*second);
+        LazySequence<int>* all_three = first_two->Concat(*third);
+
+        delete first_two;
+        delete third;
+        delete second;
+        delete first;
+
+        return all_three;
+        };
+
+    // 1. Base: N concat N concat N
+    {
+        LazySequence<int>* sequence = createThreeNaturals();
+
+        checkFinite("base ordinary 0", sequence, 0, 0);
+        checkFinite("base ordinary 5", sequence, 5, 5);
+
+        checkTransfinite("base omega + 0", sequence, TransfiniteIndex::AfterInfinity(0), 0);
+        checkTransfinite("base omega + 3", sequence, TransfiniteIndex::AfterInfinity(3), 3);
+
+        checkTransfinite("base 2 omega + 0", sequence, TransfiniteIndex(2, 0), 0);
+        checkTransfinite("base 2 omega + 3", sequence, TransfiniteIndex(2, 3), 3);
+
+        CHECK_THROWS("base has no 3 omega", sequence->Get(TransfiniteIndex(3, 0)));
+
+        delete sequence;
+    }
+
+    // 2. PrependGenerator over 3 infinities
+    {
+        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* result = sequence->Prepend(-1);
+
+        checkFinite("prepend finite 0", result, 0, -1);
+        checkFinite("prepend finite 1", result, 1, 0);
+        checkFinite("prepend finite 6", result, 6, 5);
+
+        checkTransfinite("prepend omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        checkTransfinite("prepend 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+
+        CHECK_THROWS("prepend has no 3 omega", result->Get(TransfiniteIndex(3, 0)));
+
+        delete result;
+        delete sequence;
+    }
+
+    // 3. InsertItemGenerator over 3 infinities
+    {
+        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* result = sequence->InsertAt(777, 2);
+
+        checkFinite("insert item before", result, 1, 1);
+        checkFinite("insert item value", result, 2, 777);
+        checkFinite("insert item shifted", result, 3, 2);
+        checkFinite("insert item later", result, 7, 6);
+
+        checkTransfinite("insert item omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        checkTransfinite("insert item 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+
+        CHECK_THROWS("insert item has no 3 omega", result->Get(TransfiniteIndex(3, 0)));
+
+        delete result;
+        delete sequence;
+    }
+
+    // 4. AppendGenerator after 3 infinities
+    {
+        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* result = sequence->Append(999);
+
+        checkFinite("append ordinary 5", result, 5, 5);
+
+        checkTransfinite("append omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        checkTransfinite("append 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+
+        checkTransfinite("append value at 3 omega + 0", result, TransfiniteIndex(3, 0), 999);
+
+        CHECK_THROWS("append after value throws", result->Get(TransfiniteIndex(3, 1)));
+
+        delete result;
+        delete sequence;
+    }
+
+    // 5. ConcatGenerator: 3 infinities + 1 infinity = 4 infinities
+    {
+        LazySequence<int>* left = createThreeNaturals();
+        LazySequence<int>* right = CreateNaturals();
+
+        LazySequence<int>* result = left->Concat(*right);
+
+        checkFinite("concat ordinary 4", result, 4, 4);
+
+        checkTransfinite("concat omega + 4", result, TransfiniteIndex::AfterInfinity(4), 4);
+        checkTransfinite("concat 2 omega + 4", result, TransfiniteIndex(2, 4), 4);
+        checkTransfinite("concat 3 omega + 4", result, TransfiniteIndex(3, 4), 4);
+
+        CHECK_THROWS("concat has no 4 omega", result->Get(TransfiniteIndex(4, 0)));
+
+        delete result;
+        delete right;
+        delete left;
+    }
+
+    // 6. InsertSequenceGenerator: insert 3 infinities into finite sequence
+    {
+        int data[] = { 10, 20, 30 };
+        LazySequence<int> finite(data, 3);
+
+        LazySequence<int>* inserted = createThreeNaturals();
+        LazySequence<int>* result = finite.InsertSequenceAt(*inserted, 1);
+
+        checkFinite("insert sequence finite prefix", result, 0, 10);
+        checkFinite("insert sequence first infinite block 0", result, 1, 0);
+        checkFinite("insert sequence first infinite block 5", result, 6, 5);
+
+        checkTransfinite("insert sequence omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        checkTransfinite("insert sequence 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+
+        checkTransfinite("insert sequence finite tail 3 omega + 0", result, TransfiniteIndex(3, 0), 20);
+        checkTransfinite("insert sequence finite tail 3 omega + 1", result, TransfiniteIndex(3, 1), 30);
+
+        CHECK_THROWS("insert sequence after finite tail throws", result->Get(TransfiniteIndex(3, 2)));
+
+        delete result;
+        delete inserted;
+    }
+
+    // 7. InsertSequenceGenerator: insert finite sequence into 3 infinities
+    {
+        int inserted_data[] = { 100, 200 };
+        LazySequence<int> inserted(inserted_data, 2);
+
+        LazySequence<int>* source = createThreeNaturals();
+        LazySequence<int>* result = source->InsertSequenceAt(inserted, 2);
+
+        checkFinite("insert finite into infinite before", result, 1, 1);
+        checkFinite("insert finite into infinite first inserted", result, 2, 100);
+        checkFinite("insert finite into infinite second inserted", result, 3, 200);
+        checkFinite("insert finite into infinite shifted", result, 4, 2);
+
+        checkTransfinite("insert finite into infinite omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        checkTransfinite("insert finite into infinite 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+
+        CHECK_THROWS("insert finite into infinite has no 3 omega", result->Get(TransfiniteIndex(3, 0)));
+
+        delete result;
+        delete source;
+    }
+}
+
 void run_all_tests() {
     test_CardinalAndCardinalIO();
     test_TransfiniteIndex();
@@ -888,6 +1210,11 @@ void run_all_tests() {
     test_ProtocolStatisticsTaskWithEventStream();
     test_ProtocolStatisticsTaskWithFile();
 
+    test_EventBatchProcessingTask();
+    test_ThreeConcat();
+
+    test_AllGeneratorsWithMultipleInfinities();
+
     std::cout << "\n=== RESULT ===\n";
     std::cout << "Passed: " << total - failed << " / " << total << "\n";
 
@@ -897,7 +1224,6 @@ void run_all_tests() {
 }
 
 int main() {
-    test_ThreeConcat();
     run_all_tests();
     return failed == 0 ? 0 : 1;
 }

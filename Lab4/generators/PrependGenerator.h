@@ -47,7 +47,11 @@ public:
 
     T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
 
+    T GetAfterInfinite(int index) const override;
+
     Cardinal GetResultCardinality() const override;
+
+    TransfiniteLength GetResultLength() const override;
 };
 
 #include "PrependGenerator.tpp"

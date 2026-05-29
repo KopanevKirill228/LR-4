@@ -56,26 +56,29 @@ public:
     int GetLength() const override;
     Cardinal GetCardinality() const;
 
+    TransfiniteLength GetTransfiniteLength() const;
+
     T GetAfterInfinite(int index) const;
 
     int GetMaterializedCount() const;
     bool IsInfinite() const;
 
-    Sequence<T>* GetSubsequence(int startIndex, int endIndex) const override;
+    LazySequence<T>* GetSubsequence(int startIndex, int endIndex) const override;
 
-    Sequence<T>* Append(const T& item) override;
-    Sequence<T>* Prepend(const T& item) override;
-    Sequence<T>* InsertAt(const T& item, int index) override;
+    LazySequence<T>* Append(const T& item) override;
+    LazySequence<T>* Prepend(const T& item) override;
+    LazySequence<T>* InsertAt(const T& item, int index) override;
 
     LazySequence<T>* InsertSequenceAt(
         const LazySequence<T>& sequence,
         const TransfiniteIndex& index
     );
 
-    Sequence<T>* Concat(const Sequence<T>& other) const override;
+    LazySequence<T>* Concat(const Sequence<T>& other) const override;
+    LazySequence<T>* Concat(const LazySequence<T>& other) const;
 
     T operator[](int index) const override;
-    Sequence<T>* operator+(const Sequence<T>& other) const override;
+    LazySequence<T>* operator+(const Sequence<T>& other) const override;
 
     class Enumerator : public IEnumerator<T> {
     private:

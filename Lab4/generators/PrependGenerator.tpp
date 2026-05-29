@@ -123,6 +123,16 @@ Generator<T>* PrependGenerator<T>::Clone() const {
 
 
 template <class T>
+T PrependGenerator<T>::GetAfterInfinite(int index) const {
+    if (index < 0) {
+        throw std::out_of_range("PrependGenerator: after-infinity index is negative");
+    }
+
+    return GetByTransfiniteIndex(TransfiniteIndex::AfterInfinity(index));
+}
+
+
+template <class T>
 T PrependGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) const {
     if (index.IsFinite()) {
         int finite_index = index.GetFiniteIndex();
@@ -140,4 +150,15 @@ T PrependGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) cons
 template <class T>
 Cardinal PrependGenerator<T>::GetResultCardinality() const {
     return result_length_;
+}
+
+template <class T>
+TransfiniteLength PrependGenerator<T>::GetResultLength() const {
+    TransfiniteLength source_length = source_->GetTransfiniteLength();
+
+    if (source_length.IsInfinite()) {
+        return source_length;
+    }
+
+    return TransfiniteLength::Finite(source_length.GetFiniteCount() + 1);
 }

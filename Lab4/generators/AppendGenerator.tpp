@@ -19,6 +19,13 @@ AppendGenerator<T>::AppendGenerator(
     item_(new T(item)),
     source_length_(source.GetCardinality()),
     result_length_(AppendResultCardinal(source.GetCardinality())),
+    source_transfinite_length_(source.GetTransfiniteLength()),
+    result_transfinite_length_(
+        TransfiniteLength::Add(
+            source.GetTransfiniteLength(),
+            TransfiniteLength::Finite(1)
+        )
+    ),
     position_(0) {
 }
 
@@ -29,9 +36,10 @@ AppendGenerator<T>::AppendGenerator(const AppendGenerator<T>& other)
     item_(other.item_ == nullptr ? nullptr : new T(*other.item_)),
     source_length_(other.source_length_),
     result_length_(other.result_length_),
+    source_transfinite_length_(other.source_transfinite_length_),
+    result_transfinite_length_(other.result_transfinite_length_),
     position_(other.position_) {
 }
-
 
 template <class T>
 AppendGenerator<T>& AppendGenerator<T>::operator=(const AppendGenerator<T>& other) {
@@ -56,6 +64,8 @@ AppendGenerator<T>& AppendGenerator<T>::operator=(const AppendGenerator<T>& othe
     source_length_ = other.source_length_;
     result_length_ = other.result_length_;
     position_ = other.position_;
+    source_transfinite_length_ = other.source_transfinite_length_;
+    result_transfinite_length_ = other.result_transfinite_length_;
 
     return *this;
 }
@@ -130,68 +140,45 @@ Generator<T>* AppendGenerator<T>::Clone() const {
 
 
 template <class T>
+T AppendGenerator<T>::GetAfterInfinite(int index) const {
+    if (index < 0) {
+        throw std::out_of_range("AppendGenerator: after-infinity index is negative");
+    }
+
+    return GetByTransfiniteIndex(TransfiniteIndex::AfterInfinity(index));
+}
+
+
+template <class T>
 T AppendGenerator<T>::GetByTransfiniteIndex(const TransfiniteIndex& index) const {
-    if (index.IsFinite()) {
-        int finite_index = index.GetFiniteIndex();
-
-        if (source_length_.IsInfinite()) {
-            return source_->Get(finite_index);
+    if (source_transfinite_length_.Contains(index)) {
+        if (index.IsFinite()) {
+            return source_->Get(index.GetFiniteIndex());
         }
 
-        int source_length = source_length_.GetFiniteValue();
-
-        if (finite_index < source_length) {
-            return source_->Get(finite_index);
-        }
-
-        if (finite_index == source_length) {
-            return *item_;
-        }
-
-        throw std::out_of_range("AppendGenerator: index is out of range");
-    }
-
-    if (!source_length_.IsInfinite()) {
-        throw std::out_of_range("AppendGenerator: no transfinite tail");
-    }
-
-    int tail_index = index.GetFiniteIndex();
-
-    if (index.GetInfinityCount() == 1) {
-        int used_by_source = 0;
-
-        while (used_by_source <= tail_index) {
-            try {
-                T value = source_->Get(
-                    TransfiniteIndex::AfterInfinity(used_by_source)
-                );
-
-                if (used_by_source == tail_index) {
-                    return value;
-                }
-
-                ++used_by_source;
-            }
-            catch (...) {
-                if (tail_index == used_by_source) {
-                    return *item_;
-                }
-
-                throw std::out_of_range("AppendGenerator: transfinite index is out of range");
-            }
-        }
-    }
-
-    try {
         return source_->Get(index);
     }
-    catch (...) {
-        throw std::out_of_range("AppendGenerator: transfinite index is out of range");
+
+    TransfiniteIndex appended_index =
+        source_transfinite_length_.SubtractFrom(index);
+
+    if (appended_index.IsFinite() && appended_index.GetFiniteIndex() == 0) {
+        return *item_;
     }
+
+    throw std::out_of_range("AppendGenerator: transfinite index is out of range");
 }
 
 
 template <class T>
 Cardinal AppendGenerator<T>::GetResultCardinality() const {
     return result_length_;
+}
+
+template <class T>
+TransfiniteLength AppendGenerator<T>::GetResultLength() const {
+    return TransfiniteLength::Add(
+        source_->GetTransfiniteLength(),
+        TransfiniteLength::Finite(1)
+    );
 }

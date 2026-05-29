@@ -21,6 +21,10 @@ private:
     Cardinal inserted_length_;
     Cardinal result_length_;
 
+    TransfiniteLength source_transfinite_length_;
+    TransfiniteLength inserted_transfinite_length_;
+    TransfiniteLength result_transfinite_length_;
+
     TransfiniteIndex index_;
 
     int position_;
@@ -57,7 +61,11 @@ public:
 
     T GetByTransfiniteIndex(const TransfiniteIndex& index) const override;
 
+    T GetAfterInfinite(int index) const override;
+
     Cardinal GetResultCardinality() const override;
+
+    TransfiniteLength GetResultLength() const override;
 };
 
 #include "InsertSequenceGenerator.tpp"

@@ -30,6 +30,8 @@ public:
     Generator<T>* Clone() const override;
 
     Cardinal GetResultCardinality() const override;
+
+    TransfiniteLength GetResultLength() const override;
 };
 
 #include "SequenceGenerator.tpp"
