@@ -466,6 +466,7 @@ void test_ConcatGenerator() {
     delete first;
 }
 
+
 void test_InsertSequenceGenerator() {
     SUITE("InsertSequenceGenerator");
 
@@ -896,6 +897,7 @@ void run_all_tests() {
 }
 
 int main() {
+    test_ThreeConcat();
     run_all_tests();
     return failed == 0 ? 0 : 1;
 }
