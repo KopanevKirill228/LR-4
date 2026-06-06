@@ -30,10 +30,13 @@
 #include "tasks/Event.h"
 #include "tasks/EventParser.h"
 #include "tasks/EventReadOnlyStream.h"
+#include "tasks/EventMapReadOnlyStream.h"
 #include "tasks/OnlineEventStatistics.h"
 #include "tasks/ProtocolStatisticsTask.h"
 
 #include "event_batch_processing/EventBatchProcessingTask.h"
+#include "live_event_processing/LiveFileWriter.h"
+#include "live_event_processing/LiveFileBatchConsumer.h"
 
 static int total = 0;
 static int failed = 0;
@@ -69,13 +72,100 @@ static bool near(double first, double second) {
 #define SUITE(name) \
     do { std::cout << "\n=== " << name << " ===\n"; } while (0)
 
+int NaturalRule(const Sequence<int>& source) {
+    return source.GetLength();
+}
+
+int FibonacciRule(const Sequence<int>& source) {
+    int length = source.GetLength();
+    return source.Get(length - 1) + source.Get(length - 2);
+}
+
+double IdentityDoubleMapper(const double& value) {
+    return value;
+}
+
+
+double DoubleMeasureValue(const double& value) {
+    return value * 2.0;
+}
+
+
+double AddTenMapper(const double& value) {
+    return value + 10.0;
+}
+
+
+double SquareMapper(const double& value) {
+    return value * value;
+}
+
+
+static int live_message_count = 0;
+static int live_line_read_count = 0;
+static int live_batch_processed_count = 0;
+static int live_finished_count = 0;
+
+
+void ResetLiveMessageCounters() {
+    live_message_count = 0;
+    live_line_read_count = 0;
+    live_batch_processed_count = 0;
+    live_finished_count = 0;
+}
+
+
+void CountLiveConsumerMessage(const LiveConsumerMessage<double>& message) {
+    ++live_message_count;
+
+    if (message.type == LiveConsumerMessageType::LineRead) {
+        ++live_line_read_count;
+    }
+    else if (message.type == LiveConsumerMessageType::BatchProcessed) {
+        ++live_batch_processed_count;
+    }
+    else if (message.type == LiveConsumerMessageType::Finished) {
+        ++live_finished_count;
+    }
+}
+
+static void CheckFiniteValue(
+    const char* desc,
+    LazySequence<int>* sequence,
+    int index,
+    int expected
+) {
+    try {
+        int value = sequence->Get(index);
+        CHECK(desc, value == expected);
+    }
+    catch (const std::exception& e) {
+        std::cout << "  [EXCEPTION] " << desc << ": " << e.what() << "\n";
+        CHECK(desc, false);
+    }
+}
+
+static void CheckTransfiniteValue(
+    const char* desc,
+    LazySequence<int>* sequence,
+    const TransfiniteIndex& index,
+    int expected
+) {
+    try {
+        int value = sequence->Get(index);
+        CHECK(desc, value == expected);
+    }
+    catch (const std::exception& e) {
+        std::cout << "  [EXCEPTION] " << desc << ": " << e.what() << "\n";
+        CHECK(desc, false);
+    }
+}
+
 static LazySequence<int>* CreateNaturals() {
     int init_data[] = { 0 };
     MutableArraySequence<int> init(init_data, 1);
     return new LazySequence<int>(
-        [](const Sequence<int>& source) {
-            return source.GetLength();
-        },
+        NaturalRule,
         init
     );
 }
@@ -100,10 +190,7 @@ static LazySequence<int>* CreateFibonacciFromZeroOne() {
     int init_data[] = { 0, 1 };
     MutableArraySequence<int> init(init_data, 2);
     return new LazySequence<int>(
-        [](const Sequence<int>& source) {
-            int length = source.GetLength();
-            return source.Get(length - 1) + source.Get(length - 2);
-        },
+        FibonacciRule,
         init
     );
 }
@@ -112,10 +199,7 @@ static LazySequence<int>* CreateFibonacciFromOnes() {
     int init_data[] = { 1, 1 };
     MutableArraySequence<int> init(init_data, 2);
     return new LazySequence<int>(
-        [](const Sequence<int>& source) {
-            int length = source.GetLength();
-            return source.Get(length - 1) + source.Get(length - 2);
-        },
+        FibonacciRule,
         init
     );
 }
@@ -238,9 +322,7 @@ void test_RuleGeneratorAndMemoization() {
     CHECK_THROWS(
         "rule with empty init throws",
         LazySequence<int>(
-            [](const Sequence<int>& source) {
-                return source.GetLength();
-            },
+            NaturalRule,
             empty_init
         )
     );
@@ -252,13 +334,11 @@ void test_LazySubsequenceAndEnumerator() {
     int data[] = { 10, 20, 30, 40, 50 };
     LazySequence<int> finite(data, 5);
 
-    Sequence<int>* sub = finite.GetSubsequence(1, 3);
-    LazySequence<int>* lazy_sub = dynamic_cast<LazySequence<int>*>(sub);
+    LazySequence<int>* sub = finite.GetSubsequence(1, 3);
 
-    CHECK("subsequence is lazy", lazy_sub != nullptr);
-    CHECK("subsequence length", lazy_sub->GetLength() == 3);
-    CHECK("subsequence 0", lazy_sub->Get(0) == 20);
-    CHECK("subsequence 2", lazy_sub->Get(2) == 40);
+    CHECK("subsequence length", sub->GetLength() == 3);
+    CHECK("subsequence 0", sub->Get(0) == 20);
+    CHECK("subsequence 2", sub->Get(2) == 40);
     delete sub;
 
     CHECK_THROWS("subsequence negative start throws", finite.GetSubsequence(-1, 2));
@@ -316,26 +396,22 @@ void test_AppendGenerator() {
     int data[] = { 10, 20, 30 };
     LazySequence<int> finite(data, 3);
 
-    Sequence<int>* finite_result = finite.Append(40);
-    LazySequence<int>* lazy_finite_result = dynamic_cast<LazySequence<int>*>(finite_result);
+    LazySequence<int>* finite_result = finite.Append(40);
 
-    CHECK("finite append result lazy", lazy_finite_result != nullptr);
-    CHECK("finite append length", lazy_finite_result->GetLength() == 4);
-    CHECK("finite append old", lazy_finite_result->Get(2) == 30);
-    CHECK("finite append new", lazy_finite_result->Get(3) == 40);
-    CHECK_THROWS("finite append omega throws", lazy_finite_result->Get(TransfiniteIndex::AfterInfinity(0)));
+    CHECK("finite append length", finite_result->GetLength() == 4);
+    CHECK("finite append old", finite_result->Get(2) == 30);
+    CHECK("finite append new", finite_result->Get(3) == 40);
+    CHECK_THROWS("finite append omega throws", finite_result->Get(TransfiniteIndex::AfterInfinity(0)));
     delete finite_result;
 
     LazySequence<int>* fib = CreateFibonacciFromOnes();
-    Sequence<int>* infinite_result = fib->Append(0);
-    LazySequence<int>* lazy_infinite_result = dynamic_cast<LazySequence<int>*>(infinite_result);
+    LazySequence<int>* infinite_result = fib->Append(0);
 
-    CHECK("infinite append result lazy", lazy_infinite_result != nullptr);
-    CHECK("infinite append cardinality infinite", lazy_infinite_result->GetCardinality().IsInfinite());
-    CHECK("infinite append ordinary 4", lazy_infinite_result->Get(4) == 5);
-    CHECK("infinite append ordinary 5 unaffected", lazy_infinite_result->Get(5) == 8);
-    CHECK("infinite append omega 0", lazy_infinite_result->Get(TransfiniteIndex::AfterInfinity(0)) == 0);
-    CHECK_THROWS("infinite append omega 1 throws", lazy_infinite_result->Get(TransfiniteIndex::AfterInfinity(1)));
+    CHECK("infinite append cardinality infinite", infinite_result->GetCardinality().IsInfinite());
+    CHECK("infinite append ordinary 4", infinite_result->Get(4) == 5);
+    CHECK("infinite append ordinary 5 unaffected", infinite_result->Get(5) == 8);
+    CHECK("infinite append omega 0", infinite_result->Get(TransfiniteIndex::AfterInfinity(0)) == 0);
+    CHECK_THROWS("infinite append omega 1 throws", infinite_result->Get(TransfiniteIndex::AfterInfinity(1)));
     delete infinite_result;
     delete fib;
 }
@@ -345,20 +421,17 @@ void test_SeveralAppendsToInfinite() {
 
     LazySequence<int>* fib = CreateFibonacciFromOnes();
 
-    Sequence<int>* first = fib->Append(0);
-    LazySequence<int>* lazy_first = dynamic_cast<LazySequence<int>*>(first);
-    Sequence<int>* second = lazy_first->Append(7);
-    LazySequence<int>* lazy_second = dynamic_cast<LazySequence<int>*>(second);
-    Sequence<int>* third = lazy_second->Append(9);
-    LazySequence<int>* lazy_third = dynamic_cast<LazySequence<int>*>(third);
+    LazySequence<int>* first = fib->Append(0);
+    LazySequence<int>* second = first->Append(7);
+    LazySequence<int>* third = second->Append(9);
 
-    CHECK("ordinary still fibonacci 4", lazy_third->Get(4) == 5);
-    CHECK("ordinary still fibonacci 5", lazy_third->Get(5) == 8);
-    CHECK("ordinary still fibonacci 6", lazy_third->Get(6) == 13);
-    CHECK("omega first append", lazy_third->Get(TransfiniteIndex::AfterInfinity(0)) == 0);
-    CHECK("omega second append", lazy_third->Get(TransfiniteIndex::AfterInfinity(1)) == 7);
-    CHECK("omega third append", lazy_third->Get(TransfiniteIndex::AfterInfinity(2)) == 9);
-    CHECK_THROWS("omega after last throws", lazy_third->Get(TransfiniteIndex::AfterInfinity(3)));
+    CHECK("ordinary still fibonacci 4", third->Get(4) == 5);
+    CHECK("ordinary still fibonacci 5", third->Get(5) == 8);
+    CHECK("ordinary still fibonacci 6", third->Get(6) == 13);
+    CHECK("omega first append", third->Get(TransfiniteIndex::AfterInfinity(0)) == 0);
+    CHECK("omega second append", third->Get(TransfiniteIndex::AfterInfinity(1)) == 7);
+    CHECK("omega third append", third->Get(TransfiniteIndex::AfterInfinity(2)) == 9);
+    CHECK_THROWS("omega after last throws", third->Get(TransfiniteIndex::AfterInfinity(3)));
 
     delete third;
     delete second;
@@ -372,23 +445,19 @@ void test_PrependGenerator() {
     int data[] = { 10, 20, 30 };
     LazySequence<int> finite(data, 3);
 
-    Sequence<int>* finite_result = finite.Prepend(5);
-    LazySequence<int>* lazy_finite_result = dynamic_cast<LazySequence<int>*>(finite_result);
+    LazySequence<int>* finite_result = finite.Prepend(5);
 
-    CHECK("finite prepend result lazy", lazy_finite_result != nullptr);
-    CHECK("finite prepend length", lazy_finite_result->GetLength() == 4);
-    CHECK("finite prepend first", lazy_finite_result->Get(0) == 5);
-    CHECK("finite prepend shifted", lazy_finite_result->Get(1) == 10);
+    CHECK("finite prepend length", finite_result->GetLength() == 4);
+    CHECK("finite prepend first", finite_result->Get(0) == 5);
+    CHECK("finite prepend shifted", finite_result->Get(1) == 10);
     delete finite_result;
 
     LazySequence<int>* naturals = CreateNaturals();
-    Sequence<int>* infinite_result = naturals->Prepend(-1);
-    LazySequence<int>* lazy_infinite_result = dynamic_cast<LazySequence<int>*>(infinite_result);
+    LazySequence<int>* infinite_result = naturals->Prepend(-1);
 
-    CHECK("infinite prepend result lazy", lazy_infinite_result != nullptr);
-    CHECK("infinite prepend first", lazy_infinite_result->Get(0) == -1);
-    CHECK("infinite prepend shifted 0", lazy_infinite_result->Get(1) == 0);
-    CHECK("infinite prepend shifted 5", lazy_infinite_result->Get(6) == 5);
+    CHECK("infinite prepend first", infinite_result->Get(0) == -1);
+    CHECK("infinite prepend shifted 0", infinite_result->Get(1) == 0);
+    CHECK("infinite prepend shifted 5", infinite_result->Get(6) == 5);
     delete infinite_result;
     delete naturals;
 }
@@ -399,39 +468,35 @@ void test_InsertItemGenerator() {
     int data[] = { 10, 20, 30 };
     LazySequence<int> finite(data, 3);
 
-    Sequence<int>* begin = finite.InsertAt(5, 0);
-    LazySequence<int>* lazy_begin = dynamic_cast<LazySequence<int>*>(begin);
-    CHECK("insert begin length", lazy_begin->GetLength() == 4);
-    CHECK("insert begin value", lazy_begin->Get(0) == 5);
-    CHECK("insert begin shifted", lazy_begin->Get(1) == 10);
+    LazySequence<int>* begin = finite.InsertAt(5, 0);
+    CHECK("insert begin length", begin->GetLength() == 4);
+    CHECK("insert begin value", begin->Get(0) == 5);
+    CHECK("insert begin shifted", begin->Get(1) == 10);
     delete begin;
 
-    Sequence<int>* middle = finite.InsertAt(777, 1);
-    LazySequence<int>* lazy_middle = dynamic_cast<LazySequence<int>*>(middle);
-    CHECK("insert middle length", lazy_middle->GetLength() == 4);
-    CHECK("insert middle before", lazy_middle->Get(0) == 10);
-    CHECK("insert middle value", lazy_middle->Get(1) == 777);
-    CHECK("insert middle shifted", lazy_middle->Get(2) == 20);
+    LazySequence<int>* middle = finite.InsertAt(777, 1);
+    CHECK("insert middle length", middle->GetLength() == 4);
+    CHECK("insert middle before", middle->Get(0) == 10);
+    CHECK("insert middle value", middle->Get(1) == 777);
+    CHECK("insert middle shifted", middle->Get(2) == 20);
     delete middle;
 
-    Sequence<int>* end = finite.InsertAt(40, 3);
-    LazySequence<int>* lazy_end = dynamic_cast<LazySequence<int>*>(end);
-    CHECK("insert end length", lazy_end->GetLength() == 4);
-    CHECK("insert end old last", lazy_end->Get(2) == 30);
-    CHECK("insert end new last", lazy_end->Get(3) == 40);
+    LazySequence<int>* end = finite.InsertAt(40, 3);
+    CHECK("insert end length", end->GetLength() == 4);
+    CHECK("insert end old last", end->Get(2) == 30);
+    CHECK("insert end new last", end->Get(3) == 40);
     delete end;
 
     CHECK_THROWS("insert negative throws", finite.InsertAt(0, -1));
     CHECK_THROWS("insert too far throws", finite.InsertAt(0, 4));
 
     LazySequence<int>* naturals = CreateNaturals();
-    Sequence<int>* infinite_insert = naturals->InsertAt(100, 2);
-    LazySequence<int>* lazy_infinite_insert = dynamic_cast<LazySequence<int>*>(infinite_insert);
+    LazySequence<int>* infinite_insert = naturals->InsertAt(100, 2);
 
-    CHECK("insert infinite 0", lazy_infinite_insert->Get(0) == 0);
-    CHECK("insert infinite 1", lazy_infinite_insert->Get(1) == 1);
-    CHECK("insert infinite item", lazy_infinite_insert->Get(2) == 100);
-    CHECK("insert infinite shifted", lazy_infinite_insert->Get(3) == 2);
+    CHECK("insert infinite 0", infinite_insert->Get(0) == 0);
+    CHECK("insert infinite 1", infinite_insert->Get(1) == 1);
+    CHECK("insert infinite item", infinite_insert->Get(2) == 100);
+    CHECK("insert infinite shifted", infinite_insert->Get(3) == 2);
     delete infinite_insert;
     delete naturals;
 }
@@ -444,41 +509,36 @@ void test_ConcatGenerator() {
     LazySequence<int> left(left_data, 2);
     LazySequence<int> right(right_data, 3);
 
-    Sequence<int>* finite_finite = left.Concat(right);
-    LazySequence<int>* lazy_finite_finite = dynamic_cast<LazySequence<int>*>(finite_finite);
-    CHECK("finite finite result lazy", lazy_finite_finite != nullptr);
-    CHECK("finite finite length", lazy_finite_finite->GetLength() == 5);
-    CHECK("finite finite 0", lazy_finite_finite->Get(0) == 10);
-    CHECK("finite finite 4", lazy_finite_finite->Get(4) == 50);
+    LazySequence<int>* finite_finite = left.Concat(right);
+    CHECK("finite finite length", finite_finite->GetLength() == 5);
+    CHECK("finite finite 0", finite_finite->Get(0) == 10);
+    CHECK("finite finite 4", finite_finite->Get(4) == 50);
     delete finite_finite;
 
     LazySequence<int>* naturals = CreateNaturals();
-    Sequence<int>* finite_infinite = left.Concat(*naturals);
-    LazySequence<int>* lazy_finite_infinite = dynamic_cast<LazySequence<int>*>(finite_infinite);
-    CHECK("finite infinite cardinality", lazy_finite_infinite->GetCardinality().IsInfinite());
-    CHECK("finite infinite left", lazy_finite_infinite->Get(0) == 10);
-    CHECK("finite infinite right 0", lazy_finite_infinite->Get(2) == 0);
-    CHECK("finite infinite right 5", lazy_finite_infinite->Get(7) == 5);
+    LazySequence<int>* finite_infinite = left.Concat(*naturals);
+    CHECK("finite infinite cardinality", finite_infinite->GetCardinality().IsInfinite());
+    CHECK("finite infinite left", finite_infinite->Get(0) == 10);
+    CHECK("finite infinite right 0", finite_infinite->Get(2) == 0);
+    CHECK("finite infinite right 5", finite_infinite->Get(7) == 5);
     delete finite_infinite;
 
-    Sequence<int>* infinite_finite = naturals->Concat(right);
-    LazySequence<int>* lazy_infinite_finite = dynamic_cast<LazySequence<int>*>(infinite_finite);
-    CHECK("infinite finite ordinary", lazy_infinite_finite->Get(5) == 5);
-    CHECK("infinite finite omega 0", lazy_infinite_finite->Get(TransfiniteIndex::AfterInfinity(0)) == 30);
-    CHECK("infinite finite omega 2", lazy_infinite_finite->Get(TransfiniteIndex::AfterInfinity(2)) == 50);
-    CHECK_THROWS("infinite finite omega 3 throws", lazy_infinite_finite->Get(TransfiniteIndex::AfterInfinity(3)));
+    LazySequence<int>* infinite_finite = naturals->Concat(right);
+    CHECK("infinite finite ordinary", infinite_finite->Get(5) == 5);
+    CHECK("infinite finite omega 0", infinite_finite->Get(TransfiniteIndex::AfterInfinity(0)) == 30);
+    CHECK("infinite finite omega 2", infinite_finite->Get(TransfiniteIndex::AfterInfinity(2)) == 50);
+    CHECK_THROWS("infinite finite omega 3 throws", infinite_finite->Get(TransfiniteIndex::AfterInfinity(3)));
     delete infinite_finite;
     delete naturals;
 
     LazySequence<int>* first = CreateNaturals();
     LazySequence<int>* second = CreateFibonacciFromZeroOne();
-    Sequence<int>* infinite_infinite = first->Concat(*second);
-    LazySequence<int>* lazy_infinite_infinite = dynamic_cast<LazySequence<int>*>(infinite_infinite);
+    LazySequence<int>* infinite_infinite = first->Concat(*second);
 
-    CHECK("infinite infinite ordinary", lazy_infinite_infinite->Get(10) == 10);
-    CHECK("infinite infinite omega 0", lazy_infinite_infinite->Get(TransfiniteIndex::AfterInfinity(0)) == 0);
-    CHECK("infinite infinite omega 1", lazy_infinite_infinite->Get(TransfiniteIndex::AfterInfinity(1)) == 1);
-    CHECK("infinite infinite omega 5", lazy_infinite_infinite->Get(TransfiniteIndex::AfterInfinity(5)) == 5);
+    CHECK("infinite infinite ordinary", infinite_infinite->Get(10) == 10);
+    CHECK("infinite infinite omega 0", infinite_infinite->Get(TransfiniteIndex::AfterInfinity(0)) == 0);
+    CHECK("infinite infinite omega 1", infinite_infinite->Get(TransfiniteIndex::AfterInfinity(1)) == 1);
+    CHECK("infinite infinite omega 5", infinite_infinite->Get(TransfiniteIndex::AfterInfinity(5)) == 5);
     delete infinite_infinite;
     delete second;
     delete first;
@@ -543,18 +603,16 @@ void test_CopyAssignmentForGeneratedSequences() {
 
     LazySequence<int>* fib = CreateFibonacciFromOnes();
 
-    Sequence<int>* first = fib->Append(0);
-    LazySequence<int>* lazy_first = dynamic_cast<LazySequence<int>*>(first);
-    Sequence<int>* second = lazy_first->Append(7);
-    LazySequence<int>* lazy_second = dynamic_cast<LazySequence<int>*>(second);
+    LazySequence<int>* first = fib->Append(0);
+    LazySequence<int>* second = first->Append(7);
 
-    LazySequence<int> copied(*lazy_second);
+    LazySequence<int> copied(*second);
     CHECK("copy ordinary", copied.Get(5) == 8);
     CHECK("copy omega 0", copied.Get(TransfiniteIndex::AfterInfinity(0)) == 0);
     CHECK("copy omega 1", copied.Get(TransfiniteIndex::AfterInfinity(1)) == 7);
 
     LazySequence<int> assigned;
-    assigned = *lazy_second;
+    assigned = *second;
     CHECK("assignment ordinary", assigned.Get(5) == 8);
     CHECK("assignment omega 0", assigned.Get(TransfiniteIndex::AfterInfinity(0)) == 0);
     CHECK("assignment omega 1", assigned.Get(TransfiniteIndex::AfterInfinity(1)) == 7);
@@ -762,6 +820,64 @@ void test_EventReadOnlyStream() {
     event_stream.Close();
 }
 
+void test_EventMapReadOnlyStream() {
+    SUITE("EventMapReadOnlyStream");
+
+    Event<double> events_data[] = {
+        Event<double>(EventType::Start, 0.0, ""),
+        Event<double>(EventType::Measure, 10.0, ""),
+        Event<double>(EventType::Error, 0.0, "sensor"),
+        Event<double>(EventType::Measure, 20.0, ""),
+        Event<double>(EventType::End, 0.0, "")
+    };
+
+    MutableArraySequence<Event<double>> events(events_data, 5);
+    SequenceReadOnlyStream<Event<double>> event_stream(&events);
+
+    EventMapReadOnlyStream<double> mapped_stream(
+        &event_stream,
+        DoubleMeasureValue
+    );
+
+    CHECK_THROWS("mapped read before open throws", mapped_stream.Read());
+
+    mapped_stream.Open();
+
+    Event<double> first = mapped_stream.Read();
+    CHECK("mapped start unchanged", first.type == EventType::Start);
+
+    Event<double> second = mapped_stream.Read();
+    CHECK("mapped measure type", second.type == EventType::Measure);
+    CHECK_NEAR("mapped measure value 1", second.value, 20.0);
+
+    Event<double> third = mapped_stream.Read();
+    CHECK("mapped error unchanged type", third.type == EventType::Error);
+    CHECK("mapped error message", third.message == "sensor");
+
+    Event<double> fourth = mapped_stream.Read();
+    CHECK("mapped second measure type", fourth.type == EventType::Measure);
+    CHECK_NEAR("mapped measure value 2", fourth.value, 40.0);
+
+    Event<double> fifth = mapped_stream.Read();
+    CHECK("mapped end unchanged", fifth.type == EventType::End);
+
+    CHECK("mapped stream end", mapped_stream.IsEndOfStream());
+    CHECK_THROWS("mapped read after end throws", mapped_stream.Read());
+
+    mapped_stream.Close();
+
+    CHECK_THROWS(
+        "mapped stream nullptr source throws",
+        EventMapReadOnlyStream<double>(nullptr, DoubleMeasureValue)
+    );
+
+    CHECK_THROWS(
+        "mapped stream nullptr mapper throws",
+        EventMapReadOnlyStream<double>(&event_stream, nullptr)
+    );
+}
+
+
 void test_OnlineEventStatistics() {
     SUITE("OnlineEventStatistics");
 
@@ -893,32 +1009,239 @@ void test_EventBatchProcessingTask() {
         writer.Close();
     }
 
-    FileLineReadOnlyStream reader(filename);
+    {
+        FileLineReadOnlyStream reader(filename);
 
-    OnlineEventStatistics<double> stats =
-        EventBatchProcessingTask<double>::Process(
-            reader,
-            2,
-            [](const double& value) {
-                return value * 2.0;
-            }
+        OnlineEventStatistics<double> stats =
+            EventBatchProcessingTask<double>::Process(
+                reader,
+                2,
+                DoubleMeasureValue
+            );
+
+        CHECK("batch map total", stats.GetTotalEvents() == 6);
+        CHECK("batch map start", stats.GetStartEvents() == 1);
+        CHECK("batch map measure", stats.GetMeasureEvents() == 3);
+        CHECK("batch map error", stats.GetErrorEvents() == 1);
+        CHECK("batch map end", stats.GetEndEvents() == 1);
+
+        CHECK_NEAR("batch map min", stats.GetMinMeasure(), 20.0);
+        CHECK_NEAR("batch map max", stats.GetMaxMeasure(), 60.0);
+        CHECK_NEAR("batch map average", stats.GetAverageMeasure(), 40.0);
+        CHECK_NEAR("batch map median", stats.GetMedianMeasure(), 40.0);
+        CHECK_NEAR("batch map variance", stats.GetVarianceMeasure(), 800.0 / 3.0);
+    }
+
+    {
+        FileLineReadOnlyStream reader(filename);
+
+        OnlineEventStatistics<double> stats =
+            EventBatchProcessingTask<double>::Process(
+                reader,
+                2
+            );
+
+        CHECK("batch no map total", stats.GetTotalEvents() == 6);
+        CHECK("batch no map measures", stats.GetMeasureEvents() == 3);
+        CHECK_NEAR("batch no map min", stats.GetMinMeasure(), 10.0);
+        CHECK_NEAR("batch no map max", stats.GetMaxMeasure(), 30.0);
+        CHECK_NEAR("batch no map average", stats.GetAverageMeasure(), 20.0);
+        CHECK_NEAR("batch no map median", stats.GetMedianMeasure(), 20.0);
+        CHECK_NEAR("batch no map variance", stats.GetVarianceMeasure(), 200.0 / 3.0);
+    }
+
+    {
+        Event<double> events_data[] = {
+            Event<double>(EventType::Start, 0.0, ""),
+            Event<double>(EventType::Measure, 1.0, ""),
+            Event<double>(EventType::Measure, 2.0, ""),
+            Event<double>(EventType::Measure, 3.0, ""),
+            Event<double>(EventType::End, 0.0, "")
+        };
+
+        MutableArraySequence<Event<double>> events(events_data, 5);
+        SequenceReadOnlyStream<Event<double>> event_stream(&events);
+
+        OnlineEventStatistics<double> stats =
+            EventBatchProcessingTask<double>::Process(
+                event_stream,
+                2,
+                AddTenMapper
+            );
+
+        CHECK("batch event stream total", stats.GetTotalEvents() == 5);
+        CHECK("batch event stream measures", stats.GetMeasureEvents() == 3);
+        CHECK_NEAR("batch event stream min", stats.GetMinMeasure(), 11.0);
+        CHECK_NEAR("batch event stream max", stats.GetMaxMeasure(), 13.0);
+        CHECK_NEAR("batch event stream average", stats.GetAverageMeasure(), 12.0);
+        CHECK_NEAR("batch event stream median", stats.GetMedianMeasure(), 12.0);
+        CHECK_NEAR("batch event stream variance", stats.GetVarianceMeasure(), 2.0 / 3.0);
+    }
+
+    {
+        FileLineReadOnlyStream reader(filename);
+        CHECK_THROWS(
+            "batch size zero throws",
+            EventBatchProcessingTask<double>::Process(reader, 0, DoubleMeasureValue)
         );
+    }
 
-    CHECK("batch map total", stats.GetTotalEvents() == 6);
-    CHECK("batch map start", stats.GetStartEvents() == 1);
-    CHECK("batch map measure", stats.GetMeasureEvents() == 3);
-    CHECK("batch map error", stats.GetErrorEvents() == 1);
-    CHECK("batch map end", stats.GetEndEvents() == 1);
-
-    CHECK_NEAR("batch map min", stats.GetMinMeasure(), 20.0);
-    CHECK_NEAR("batch map max", stats.GetMaxMeasure(), 60.0);
-    CHECK_NEAR("batch map average", stats.GetAverageMeasure(), 40.0);
-    CHECK_NEAR("batch map median", stats.GetMedianMeasure(), 40.0);
-    CHECK_NEAR("batch map variance", stats.GetVarianceMeasure(), 800.0 / 3.0);
+    {
+        FileLineReadOnlyStream reader(filename);
+        CHECK_THROWS(
+            "batch nullptr mapper throws",
+            EventBatchProcessingTask<double>::Process(reader, 2, nullptr)
+        );
+    }
 
     std::remove(filename);
 }
 
+
+void test_LiveFileWriter() {
+    SUITE("LiveFileWriter");
+
+    const char* source_filename = "test_live_writer_source.txt";
+    const char* live_filename = "test_live_writer_live.txt";
+
+    {
+        FileLineWriteOnlyStream writer(source_filename);
+        writer.Open();
+        writer.Write("START");
+        writer.Write("MEASURE 10");
+        writer.Write("END");
+        writer.Close();
+    }
+
+    {
+        FileLineWriteOnlyStream writer(live_filename);
+        writer.Open();
+        writer.Write("OLD");
+        writer.Close();
+    }
+
+    std::ostringstream output;
+
+    LiveFileWriter::Run(
+        source_filename,
+        live_filename,
+        0,
+        true,
+        output
+    );
+
+    FileLineReadOnlyStream reader(live_filename);
+    reader.Open();
+
+    CHECK("live writer first line", reader.Read() == "START");
+    CHECK("live writer second line", reader.Read() == "MEASURE 10");
+    CHECK("live writer third line", reader.Read() == "END");
+    CHECK("live writer end", reader.IsEndOfStream());
+
+    reader.Close();
+
+    CHECK("live writer output has text", output.str().size() > 0);
+
+    std::remove(source_filename);
+    std::remove(live_filename);
+}
+
+
+void test_LiveFileBatchConsumer() {
+    SUITE("LiveFileBatchConsumer");
+
+    const char* filename = "test_live_batch_consumer.txt";
+
+    {
+        FileLineWriteOnlyStream writer(filename);
+        writer.Open();
+        writer.Write("START");
+        writer.Write("MEASURE 10");
+        writer.Write("MEASURE 20");
+        writer.Write("ERROR live");
+        writer.Write("MEASURE 30");
+        writer.Write("END");
+        writer.Close();
+    }
+
+    ResetLiveMessageCounters();
+
+    OnlineEventStatistics<double> stats =
+        LiveFileBatchConsumer<double>::Run(
+            filename,
+            2,
+            DoubleMeasureValue,
+            CountLiveConsumerMessage
+        );
+
+    CHECK("live consumer total", stats.GetTotalEvents() == 6);
+    CHECK("live consumer start", stats.GetStartEvents() == 1);
+    CHECK("live consumer measure", stats.GetMeasureEvents() == 3);
+    CHECK("live consumer error", stats.GetErrorEvents() == 1);
+    CHECK("live consumer end", stats.GetEndEvents() == 1);
+
+    CHECK_NEAR("live consumer min", stats.GetMinMeasure(), 20.0);
+    CHECK_NEAR("live consumer max", stats.GetMaxMeasure(), 60.0);
+    CHECK_NEAR("live consumer average", stats.GetAverageMeasure(), 40.0);
+    CHECK_NEAR("live consumer median", stats.GetMedianMeasure(), 40.0);
+    CHECK_NEAR("live consumer variance", stats.GetVarianceMeasure(), 800.0 / 3.0);
+
+    CHECK("live consumer message count", live_message_count > 0);
+    CHECK("live consumer read messages", live_line_read_count == 6);
+    CHECK("live consumer batch messages", live_batch_processed_count == 3);
+    CHECK("live consumer finished message", live_finished_count == 1);
+
+    {
+        CHECK_THROWS(
+            "live consumer bad batch throws",
+            LiveFileBatchConsumer<double>::Run(
+                filename,
+                0,
+                DoubleMeasureValue,
+                CountLiveConsumerMessage
+            )
+        );
+    }
+
+    {
+        CHECK_THROWS(
+            "live consumer nullptr mapper throws",
+            LiveFileBatchConsumer<double>::Run(
+                filename,
+                2,
+                nullptr,
+                CountLiveConsumerMessage
+            )
+        );
+    }
+
+    std::remove(filename);
+}
+
+void test_ThreeConcat1() {
+    SUITE("Three concat with transfinite indexes");
+
+    LazySequence<int>* first = CreateNaturals();
+    LazySequence<int>* second = CreateNaturals();
+    LazySequence<int>* third = CreateNaturals();
+
+    LazySequence<int>* result = first->Concat(*second)->Concat(*third);
+
+    CHECK(
+        "three concat omega + 0",
+        result->Get(TransfiniteIndex::AfterInfinity(0)) == 0
+    );
+
+    CHECK(
+        "three concat 2 omega + 0",
+        result->Get(TransfiniteIndex(2, 0)) == 0
+    );
+
+    delete result;
+    delete third;
+    delete second;
+    delete first;
+}
 
 void test_ThreeConcat() {
     SUITE("Three concat with transfinite indexes");
@@ -1001,56 +1324,18 @@ void test_InsertThreeConcatIntoFinite() {
 void test_AllGeneratorsWithMultipleInfinities() {
     SUITE("All generators with multiple infinities");
 
-    auto checkFinite = [](const char* desc, LazySequence<int>* sequence, int index, int expected) {
-        try {
-            int value = sequence->Get(index);
-            CHECK(desc, value == expected);
-        }
-        catch (const std::exception& e) {
-            std::cout << "  [EXCEPTION] " << desc << ": " << e.what() << "\n";
-            CHECK(desc, false);
-        }
-        };
-
-    auto checkTransfinite = [](const char* desc, LazySequence<int>* sequence, const TransfiniteIndex& index, int expected) {
-        try {
-            int value = sequence->Get(index);
-            CHECK(desc, value == expected);
-        }
-        catch (const std::exception& e) {
-            std::cout << "  [EXCEPTION] " << desc << ": " << e.what() << "\n";
-            CHECK(desc, false);
-        }
-        };
-
-    auto createThreeNaturals = []() -> LazySequence<int>*{
-        LazySequence<int>* first = CreateNaturals();
-        LazySequence<int>* second = CreateNaturals();
-        LazySequence<int>* third = CreateNaturals();
-
-        LazySequence<int>* first_two = first->Concat(*second);
-        LazySequence<int>* all_three = first_two->Concat(*third);
-
-        delete first_two;
-        delete third;
-        delete second;
-        delete first;
-
-        return all_three;
-        };
-
     // 1. Base: N concat N concat N
     {
-        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* sequence = CreateThreeNaturalsConcat();
 
-        checkFinite("base ordinary 0", sequence, 0, 0);
-        checkFinite("base ordinary 5", sequence, 5, 5);
+        CheckFiniteValue("base ordinary 0", sequence, 0, 0);
+        CheckFiniteValue("base ordinary 5", sequence, 5, 5);
 
-        checkTransfinite("base omega + 0", sequence, TransfiniteIndex::AfterInfinity(0), 0);
-        checkTransfinite("base omega + 3", sequence, TransfiniteIndex::AfterInfinity(3), 3);
+        CheckTransfiniteValue("base omega + 0", sequence, TransfiniteIndex::AfterInfinity(0), 0);
+        CheckTransfiniteValue("base omega + 3", sequence, TransfiniteIndex::AfterInfinity(3), 3);
 
-        checkTransfinite("base 2 omega + 0", sequence, TransfiniteIndex(2, 0), 0);
-        checkTransfinite("base 2 omega + 3", sequence, TransfiniteIndex(2, 3), 3);
+        CheckTransfiniteValue("base 2 omega + 0", sequence, TransfiniteIndex(2, 0), 0);
+        CheckTransfiniteValue("base 2 omega + 3", sequence, TransfiniteIndex(2, 3), 3);
 
         CHECK_THROWS("base has no 3 omega", sequence->Get(TransfiniteIndex(3, 0)));
 
@@ -1059,15 +1344,15 @@ void test_AllGeneratorsWithMultipleInfinities() {
 
     // 2. PrependGenerator over 3 infinities
     {
-        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* sequence = CreateThreeNaturalsConcat();
         LazySequence<int>* result = sequence->Prepend(-1);
 
-        checkFinite("prepend finite 0", result, 0, -1);
-        checkFinite("prepend finite 1", result, 1, 0);
-        checkFinite("prepend finite 6", result, 6, 5);
+        CheckFiniteValue("prepend finite 0", result, 0, -1);
+        CheckFiniteValue("prepend finite 1", result, 1, 0);
+        CheckFiniteValue("prepend finite 6", result, 6, 5);
 
-        checkTransfinite("prepend omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
-        checkTransfinite("prepend 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+        CheckTransfiniteValue("prepend omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        CheckTransfiniteValue("prepend 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
 
         CHECK_THROWS("prepend has no 3 omega", result->Get(TransfiniteIndex(3, 0)));
 
@@ -1077,16 +1362,16 @@ void test_AllGeneratorsWithMultipleInfinities() {
 
     // 3. InsertItemGenerator over 3 infinities
     {
-        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* sequence = CreateThreeNaturalsConcat();
         LazySequence<int>* result = sequence->InsertAt(777, 2);
 
-        checkFinite("insert item before", result, 1, 1);
-        checkFinite("insert item value", result, 2, 777);
-        checkFinite("insert item shifted", result, 3, 2);
-        checkFinite("insert item later", result, 7, 6);
+        CheckFiniteValue("insert item before", result, 1, 1);
+        CheckFiniteValue("insert item value", result, 2, 777);
+        CheckFiniteValue("insert item shifted", result, 3, 2);
+        CheckFiniteValue("insert item later", result, 7, 6);
 
-        checkTransfinite("insert item omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
-        checkTransfinite("insert item 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+        CheckTransfiniteValue("insert item omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        CheckTransfiniteValue("insert item 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
 
         CHECK_THROWS("insert item has no 3 omega", result->Get(TransfiniteIndex(3, 0)));
 
@@ -1096,15 +1381,15 @@ void test_AllGeneratorsWithMultipleInfinities() {
 
     // 4. AppendGenerator after 3 infinities
     {
-        LazySequence<int>* sequence = createThreeNaturals();
+        LazySequence<int>* sequence = CreateThreeNaturalsConcat();
         LazySequence<int>* result = sequence->Append(999);
 
-        checkFinite("append ordinary 5", result, 5, 5);
+        CheckFiniteValue("append ordinary 5", result, 5, 5);
 
-        checkTransfinite("append omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
-        checkTransfinite("append 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+        CheckTransfiniteValue("append omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        CheckTransfiniteValue("append 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
 
-        checkTransfinite("append value at 3 omega + 0", result, TransfiniteIndex(3, 0), 999);
+        CheckTransfiniteValue("append value at 3 omega + 0", result, TransfiniteIndex(3, 0), 999);
 
         CHECK_THROWS("append after value throws", result->Get(TransfiniteIndex(3, 1)));
 
@@ -1114,16 +1399,16 @@ void test_AllGeneratorsWithMultipleInfinities() {
 
     // 5. ConcatGenerator: 3 infinities + 1 infinity = 4 infinities
     {
-        LazySequence<int>* left = createThreeNaturals();
+        LazySequence<int>* left = CreateThreeNaturalsConcat();
         LazySequence<int>* right = CreateNaturals();
 
         LazySequence<int>* result = left->Concat(*right);
 
-        checkFinite("concat ordinary 4", result, 4, 4);
+        CheckFiniteValue("concat ordinary 4", result, 4, 4);
 
-        checkTransfinite("concat omega + 4", result, TransfiniteIndex::AfterInfinity(4), 4);
-        checkTransfinite("concat 2 omega + 4", result, TransfiniteIndex(2, 4), 4);
-        checkTransfinite("concat 3 omega + 4", result, TransfiniteIndex(3, 4), 4);
+        CheckTransfiniteValue("concat omega + 4", result, TransfiniteIndex::AfterInfinity(4), 4);
+        CheckTransfiniteValue("concat 2 omega + 4", result, TransfiniteIndex(2, 4), 4);
+        CheckTransfiniteValue("concat 3 omega + 4", result, TransfiniteIndex(3, 4), 4);
 
         CHECK_THROWS("concat has no 4 omega", result->Get(TransfiniteIndex(4, 0)));
 
@@ -1137,18 +1422,18 @@ void test_AllGeneratorsWithMultipleInfinities() {
         int data[] = { 10, 20, 30 };
         LazySequence<int> finite(data, 3);
 
-        LazySequence<int>* inserted = createThreeNaturals();
+        LazySequence<int>* inserted = CreateThreeNaturalsConcat();
         LazySequence<int>* result = finite.InsertSequenceAt(*inserted, 1);
 
-        checkFinite("insert sequence finite prefix", result, 0, 10);
-        checkFinite("insert sequence first infinite block 0", result, 1, 0);
-        checkFinite("insert sequence first infinite block 5", result, 6, 5);
+        CheckFiniteValue("insert sequence finite prefix", result, 0, 10);
+        CheckFiniteValue("insert sequence first infinite block 0", result, 1, 0);
+        CheckFiniteValue("insert sequence first infinite block 5", result, 6, 5);
 
-        checkTransfinite("insert sequence omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
-        checkTransfinite("insert sequence 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+        CheckTransfiniteValue("insert sequence omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        CheckTransfiniteValue("insert sequence 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
 
-        checkTransfinite("insert sequence finite tail 3 omega + 0", result, TransfiniteIndex(3, 0), 20);
-        checkTransfinite("insert sequence finite tail 3 omega + 1", result, TransfiniteIndex(3, 1), 30);
+        CheckTransfiniteValue("insert sequence finite tail 3 omega + 0", result, TransfiniteIndex(3, 0), 20);
+        CheckTransfiniteValue("insert sequence finite tail 3 omega + 1", result, TransfiniteIndex(3, 1), 30);
 
         CHECK_THROWS("insert sequence after finite tail throws", result->Get(TransfiniteIndex(3, 2)));
 
@@ -1161,16 +1446,16 @@ void test_AllGeneratorsWithMultipleInfinities() {
         int inserted_data[] = { 100, 200 };
         LazySequence<int> inserted(inserted_data, 2);
 
-        LazySequence<int>* source = createThreeNaturals();
+        LazySequence<int>* source = CreateThreeNaturalsConcat();
         LazySequence<int>* result = source->InsertSequenceAt(inserted, 2);
 
-        checkFinite("insert finite into infinite before", result, 1, 1);
-        checkFinite("insert finite into infinite first inserted", result, 2, 100);
-        checkFinite("insert finite into infinite second inserted", result, 3, 200);
-        checkFinite("insert finite into infinite shifted", result, 4, 2);
+        CheckFiniteValue("insert finite into infinite before", result, 1, 1);
+        CheckFiniteValue("insert finite into infinite first inserted", result, 2, 100);
+        CheckFiniteValue("insert finite into infinite second inserted", result, 3, 200);
+        CheckFiniteValue("insert finite into infinite shifted", result, 4, 2);
 
-        checkTransfinite("insert finite into infinite omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
-        checkTransfinite("insert finite into infinite 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
+        CheckTransfiniteValue("insert finite into infinite omega + 3", result, TransfiniteIndex::AfterInfinity(3), 3);
+        CheckTransfiniteValue("insert finite into infinite 2 omega + 3", result, TransfiniteIndex(2, 3), 3);
 
         CHECK_THROWS("insert finite into infinite has no 3 omega", result->Get(TransfiniteIndex(3, 0)));
 
@@ -1178,6 +1463,35 @@ void test_AllGeneratorsWithMultipleInfinities() {
         delete source;
     }
 }
+
+
+void test_CopyAssignmentWithMultipleInfinities() {
+    SUITE("Copy and assignment with multiple infinities");
+
+    LazySequence<int>* source = CreateThreeNaturalsConcat();
+
+    LazySequence<int> copied(*source);
+    CHECK("copy ordinary", copied.Get(8) == 8);
+    CHECK("copy omega + 4", copied.Get(TransfiniteIndex::AfterInfinity(4)) == 4);
+    CHECK("copy 2 omega + 4", copied.Get(TransfiniteIndex(2, 4)) == 4);
+    CHECK_THROWS("copy has no 3 omega", copied.Get(TransfiniteIndex(3, 0)));
+
+    LazySequence<int> assigned;
+    assigned = *source;
+    CHECK("assignment ordinary", assigned.Get(8) == 8);
+    CHECK("assignment omega + 4", assigned.Get(TransfiniteIndex::AfterInfinity(4)) == 4);
+    CHECK("assignment 2 omega + 4", assigned.Get(TransfiniteIndex(2, 4)) == 4);
+    CHECK_THROWS("assignment has no 3 omega", assigned.Get(TransfiniteIndex(3, 0)));
+
+    LazySequence<int>* appended = source->Append(999);
+    LazySequence<int> copied_appended(*appended);
+    CHECK("copy appended 3 omega + 0", copied_appended.Get(TransfiniteIndex(3, 0)) == 999);
+    CHECK_THROWS("copy appended 3 omega + 1 throws", copied_appended.Get(TransfiniteIndex(3, 1)));
+
+    delete appended;
+    delete source;
+}
+
 
 void run_all_tests() {
     test_CardinalAndCardinalIO();
@@ -1195,6 +1509,7 @@ void run_all_tests() {
     test_ConcatGenerator();
     test_InsertSequenceGenerator();
     test_CopyAssignmentForGeneratedSequences();
+    test_CopyAssignmentWithMultipleInfinities();
 
     test_SequenceReadOnlyStream();
     test_LazyReadOnlyStream();
@@ -1204,6 +1519,7 @@ void run_all_tests() {
 
     test_EventParser();
     test_EventReadOnlyStream();
+    test_EventMapReadOnlyStream();
     test_OnlineEventStatistics();
 
     test_ProtocolStatisticsTaskWithStringStream();
@@ -1211,9 +1527,13 @@ void run_all_tests() {
     test_ProtocolStatisticsTaskWithFile();
 
     test_EventBatchProcessingTask();
+    test_LiveFileWriter();
+    test_LiveFileBatchConsumer();
     test_ThreeConcat();
 
     test_AllGeneratorsWithMultipleInfinities();
+
+    test_ThreeConcat1();
 
     std::cout << "\n=== RESULT ===\n";
     std::cout << "Passed: " << total - failed << " / " << total << "\n";

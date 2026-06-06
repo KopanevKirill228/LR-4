@@ -3,6 +3,7 @@
 #include "../lib/Sequence.h"
 #include "../lazy/Cardinal.h"
 #include "../lazy/TransfiniteIndex.h"
+#include "../lazy/TransfiniteLength.h"
 #include <stdexcept>
 
 

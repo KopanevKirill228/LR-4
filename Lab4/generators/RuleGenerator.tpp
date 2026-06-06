@@ -5,17 +5,17 @@
 
 template <class T>
 RuleGenerator<T>::RuleGenerator(
-    std::function<T(const Sequence<T>&)> rule,
-    const Sequence<T>& source)
+    T(*rule)(const Sequence<T>&),
+    const Sequence<T>& source
+)
     : rule_(rule),
     source_(&source),
     position_(0)
 {
-    if (!rule_) {
-        throw std::invalid_argument("RuleGenerator: rule is empty");
+    if (rule_ == nullptr) {
+        throw std::invalid_argument("RuleGenerator: rule is nullptr");
     }
 }
-
 
 template <class T>
 RuleGenerator<T>::RuleGenerator(const RuleGenerator<T>& other)

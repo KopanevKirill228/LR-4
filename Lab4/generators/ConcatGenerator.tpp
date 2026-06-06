@@ -146,26 +146,9 @@ T ConcatGenerator<T>::GetAfterInfinite(int index) const {
         throw std::out_of_range("ConcatGenerator: after-infinity index is negative");
     }
 
-    if (first_length_.IsInfinite()) {
-        int used_by_first = 0;
-
-        while (used_by_first <= index) {
-            try {
-                T value = first_->GetAfterInfinite(used_by_first);
-
-                if (used_by_first == index) {
-                    return value;
-                }
-
-                ++used_by_first;
-            }
-            catch (...) {
-                return second_->Get(index - used_by_first);
-            }
-        }
-    }
-
-    return second_->GetAfterInfinite(index);
+    return GetByTransfiniteIndex(
+        TransfiniteIndex::AfterInfinity(index)
+    );
 }
 
 template <class T>

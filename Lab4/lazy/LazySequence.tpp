@@ -80,15 +80,15 @@ LazySequence<T>::LazySequence(const Sequence<T>& seq)
 
 template <class T>
 LazySequence<T>::LazySequence(
-    std::function<T(const Sequence<T>&)> rule,
+    T(*rule)(const Sequence<T>&),
     const Sequence<T>& initialValues)
     : materialized_(),
     generator_(nullptr),
     is_infinite_(true),
     finite_length_(-1)
 {
-    if (!rule) {
-        throw std::invalid_argument("LazySequence: rule is empty");
+    if (rule == nullptr) {
+        throw std::invalid_argument("LazySequence: rule is nullptr");
     }
 
     IEnumerator<T>* en = nullptr;

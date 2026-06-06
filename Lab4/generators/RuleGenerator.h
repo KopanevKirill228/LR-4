@@ -2,20 +2,19 @@
 
 #include "Generator.h"
 
-#include <functional>
 #include <stdexcept>
 
 
 template <class T>
 class RuleGenerator : public Generator<T> {
 private:
-    std::function<T(const Sequence<T>&)> rule_;
+    T(*rule_)(const Sequence<T>&);
     const Sequence<T>* source_;
     int position_;
 
 public:
     RuleGenerator(
-        std::function<T(const Sequence<T>&)> rule,
+        T(*rule)(const Sequence<T>&),
         const Sequence<T>& source
     );
 

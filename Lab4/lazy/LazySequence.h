@@ -10,8 +10,8 @@
 
 #include "Cardinal.h"
 #include "TransfiniteIndex.h"
+#include "TransfiniteLength.h"
 
-#include <functional>
 #include <stdexcept>
 
 
@@ -36,7 +36,7 @@ public:
     LazySequence(const Sequence<T>& seq);
 
     LazySequence(
-        std::function<T(const Sequence<T>&)> rule,
+        T(*rule)(const Sequence<T>&),
         const Sequence<T>& initialValues
     );
 

@@ -33,6 +33,10 @@
 #include "tasks/OnlineEventStatistics.h"
 #include "tasks/ProtocolStatisticsTask.h"
 
+#include "event_batch_processing/EventBatchProcessingTask.h"
+#include "live_event_processing/LiveFileWriter.h"
+#include "live_event_processing/LiveFileBatchConsumer.h"
+
 static void setupConsole() {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
@@ -83,6 +87,34 @@ static bool readIntInRange(int& val, const std::string& prompt, int lo, int hi) 
     }
 }
 
+
+static void PrintLiveConsumerMessage(
+    const LiveConsumerMessage<double>& message
+) {
+    if (message.type == LiveConsumerMessageType::WaitingForFile) {
+        std::cout << "[consumer] waiting for live file: "
+            << message.filename << "\n";
+    }
+    else if (message.type == LiveConsumerMessageType::FileOpened) {
+        std::cout << "[consumer] live file opened\n";
+    }
+    else if (message.type == LiveConsumerMessageType::LineRead) {
+        std::cout << "[consumer] read: " << message.line << "\n";
+    }
+    else if (message.type == LiveConsumerMessageType::BatchProcessed) {
+        if (message.hasMeasurements) {
+            std::cout << "[consumer] batch processed. current max MEASURE = "
+                << message.currentMax << "\n";
+        }
+        else {
+            std::cout << "[consumer] batch processed. no MEASURE values yet\n";
+        }
+    }
+    else if (message.type == LiveConsumerMessageType::Finished) {
+        std::cout << "[consumer] finished\n";
+    }
+}
+
 static std::string readLineWithPrompt(const std::string& prompt) {
     std::string line;
     std::cout << prompt;
@@ -114,14 +146,38 @@ static bool handleInputError() {
     return false;
 }
 
+static int NaturalRule(const Sequence<int>& source) {
+    return source.GetLength();
+}
+
+static int FibonacciRule(const Sequence<int>& source) {
+    int length = source.GetLength();
+    return source.Get(length - 1) + source.Get(length - 2);
+}
+
+static double IdentityMapper(const double& value) {
+    return value;
+}
+
+static double DoubleMapper(const double& value) {
+    return value * 2.0;
+}
+
+static double AddTenMapper(const double& value) {
+    return value + 10.0;
+}
+
+static double SquareMapper(const double& value) {
+    return value * value;
+}
+
+
 static LazySequence<int>* createNaturals() {
     int init_data[] = { 0 };
     MutableArraySequence<int> init(init_data, 1);
 
     return new LazySequence<int>(
-        [](const Sequence<int>& source) {
-            return source.GetLength();
-        },
+        NaturalRule,
         init
     );
 }
@@ -131,12 +187,25 @@ static LazySequence<int>* createFibonacci() {
     MutableArraySequence<int> init(init_data, 2);
 
     return new LazySequence<int>(
-        [](const Sequence<int>& source) {
-            int length = source.GetLength();
-            return source.Get(length - 1) + source.Get(length - 2);
-        },
+        FibonacciRule,
         init
     );
+}
+
+static LazySequence<int>* createThreeNaturalsConcat() {
+    LazySequence<int>* first = createNaturals();
+    LazySequence<int>* second = createNaturals();
+    LazySequence<int>* third = createNaturals();
+
+    LazySequence<int>* firstTwo = first->Concat(*second);
+    LazySequence<int>* result = firstTwo->Concat(*third);
+
+    delete firstTwo;
+    delete third;
+    delete second;
+    delete first;
+
+    return result;
 }
 
 static LazySequence<int>* readFiniteLazySequence(const std::string& name) {
@@ -376,7 +445,7 @@ static void demoLazyGetAndSubsequence() {
     printTitle("LazySequence Get, GetSubsequence, Enumerator");
 
     LazySequence<int>* sequence = nullptr;
-    Sequence<int>* subsequence = nullptr;
+    LazySequence<int>* subsequence = nullptr;
     IEnumerator<int>* enumerator = nullptr;
 
     try {
@@ -430,12 +499,9 @@ static void demoLazyGetAndSubsequence() {
                 readIntWithPrompt(end, "  Subsequence end: ")) {
                 try {
                     subsequence = sequence->GetSubsequence(start, end);
-                    LazySequence<int>* lazy_sub = dynamic_cast<LazySequence<int>*>(subsequence);
 
-                    if (lazy_sub != nullptr) {
-                        std::cout << "  Subsequence:\n";
-                        printLazyPrefix(*lazy_sub, lazy_sub->GetLength());
-                    }
+                    std::cout << "  Subsequence:\n";
+                    printLazyPrefix(*subsequence, subsequence->GetLength());
 
                     delete subsequence;
                     subsequence = nullptr;
@@ -473,7 +539,7 @@ static void demoAppend() {
     printTitle("AppendGenerator");
 
     LazySequence<int>* source = nullptr;
-    Sequence<int>* result = nullptr;
+    LazySequence<int>* result = nullptr;
 
     try {
         source = chooseLazySequence("source");
@@ -491,28 +557,30 @@ static void demoAppend() {
         }
 
         result = source->Append(item);
-        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-        if (lazy_result == nullptr) {
-            throw std::runtime_error("Append result is not LazySequence");
-        }
-
-        printLazyInfo(*lazy_result);
+        printLazyInfo(*result);
 
         int count;
 
         if (readIntWithPrompt(count, "  How many finite elements to print: ") && count >= 0) {
-            printLazyPrefix(*lazy_result, count);
+            printLazyPrefix(*result, count);
         }
 
-        if (lazy_result->IsInfinite()) {
-            try {
-                std::cout << "  Get(omega + 0) = "
-                          << lazy_result->Get(TransfiniteIndex::AfterInfinity(0))
-                          << "\n";
-            }
-            catch (const std::exception& e) {
-                printError(e.what());
+        if (result->IsInfinite()) {
+            int infinity_count;
+            int tail_index;
+
+            if (readIntWithPrompt(infinity_count, "  Try transfinite index m*omega + k, m = ") &&
+                readIntWithPrompt(tail_index, "  k = ")) {
+                try {
+                    std::cout << "  Get(" << infinity_count << "*omega + "
+                              << tail_index << ") = "
+                              << result->Get(TransfiniteIndex(infinity_count, tail_index))
+                              << "\n";
+                }
+                catch (const std::exception& e) {
+                    printError(e.what());
+                }
             }
         }
 
@@ -530,7 +598,7 @@ static void demoPrepend() {
     printTitle("PrependGenerator");
 
     LazySequence<int>* source = nullptr;
-    Sequence<int>* result = nullptr;
+    LazySequence<int>* result = nullptr;
 
     try {
         source = chooseLazySequence("source");
@@ -548,18 +616,13 @@ static void demoPrepend() {
         }
 
         result = source->Prepend(item);
-        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-        if (lazy_result == nullptr) {
-            throw std::runtime_error("Prepend result is not LazySequence");
-        }
-
-        printLazyInfo(*lazy_result);
+        printLazyInfo(*result);
 
         int count;
 
         if (readIntWithPrompt(count, "  How many elements to print: ") && count >= 0) {
-            printLazyPrefix(*lazy_result, count);
+            printLazyPrefix(*result, count);
         }
 
         delete result;
@@ -576,7 +639,7 @@ static void demoInsertItem() {
     printTitle("InsertItemGenerator");
 
     LazySequence<int>* source = nullptr;
-    Sequence<int>* result = nullptr;
+    LazySequence<int>* result = nullptr;
 
     try {
         source = chooseLazySequence("source");
@@ -601,18 +664,13 @@ static void demoInsertItem() {
         }
 
         result = source->InsertAt(item, index);
-        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-        if (lazy_result == nullptr) {
-            throw std::runtime_error("InsertAt result is not LazySequence");
-        }
-
-        printLazyInfo(*lazy_result);
+        printLazyInfo(*result);
 
         int count;
 
         if (readIntWithPrompt(count, "  How many elements to print: ") && count >= 0) {
-            printLazyPrefix(*lazy_result, count);
+            printLazyPrefix(*result, count);
         }
 
         delete result;
@@ -630,7 +688,7 @@ static void demoConcat() {
 
     LazySequence<int>* left = nullptr;
     LazySequence<int>* right = nullptr;
-    Sequence<int>* result = nullptr;
+    LazySequence<int>* result = nullptr;
 
     try {
         left = chooseLazySequence("left sequence");
@@ -647,27 +705,25 @@ static void demoConcat() {
         }
 
         result = left->Concat(*right);
-        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
 
-        if (lazy_result == nullptr) {
-            throw std::runtime_error("Concat result is not LazySequence");
-        }
-
-        printLazyInfo(*lazy_result);
+        printLazyInfo(*result);
 
         int count;
 
         if (readIntWithPrompt(count, "  How many finite elements to print: ") && count >= 0) {
-            printLazyPrefix(*lazy_result, count);
+            printLazyPrefix(*result, count);
         }
 
-        if (lazy_result->IsInfinite()) {
-            int tail;
+        if (result->IsInfinite()) {
+            int infinity_count;
+            int tail_index;
 
-            if (readIntWithPrompt(tail, "  Try transfinite index omega + k, k = ")) {
+            if (readIntWithPrompt(infinity_count, "  Try transfinite index m*omega + k, m = ") &&
+                readIntWithPrompt(tail_index, "  k = ")) {
                 try {
-                    std::cout << "  Get(omega + " << tail << ") = "
-                              << lazy_result->Get(TransfiniteIndex::AfterInfinity(tail))
+                    std::cout << "  Get(" << infinity_count << "*omega + "
+                              << tail_index << ") = "
+                              << result->Get(TransfiniteIndex(infinity_count, tail_index))
                               << "\n";
                 }
                 catch (const std::exception& e) {
@@ -785,7 +841,7 @@ static void demoAppendDoesNotChangeFibonacci() {
     printTitle("Append does not change Fibonacci rule");
 
     LazySequence<int>* fib = nullptr;
-    Sequence<int>* result = nullptr;
+    LazySequence<int>* result = nullptr;
 
     try {
         fib = createFibonacci();
@@ -799,14 +855,9 @@ static void demoAppendDoesNotChangeFibonacci() {
         }
 
         result = fib->Append(item);
-        LazySequence<int>* lazy_result = dynamic_cast<LazySequence<int>*>(result);
-
-        if (lazy_result == nullptr) {
-            throw std::runtime_error("Append result is not LazySequence");
-        }
 
         std::cout << "  Finite part after append:\n";
-        printLazyPrefix(*lazy_result, 8);
+        printLazyPrefix(*result, 8);
 
         std::cout << "  Append creates an operation generator.\n";
         std::cout << "  It does not write item into Fibonacci RuleGenerator history.\n";
@@ -814,7 +865,7 @@ static void demoAppendDoesNotChangeFibonacci() {
         std::cout << "  Appended item is located at omega + 0.\n";
 
         std::cout << "  Get(omega + 0) = "
-                  << lazy_result->Get(TransfiniteIndex::AfterInfinity(0))
+                  << result->Get(TransfiniteIndex::AfterInfinity(0))
                   << "\n";
 
         delete result;
@@ -823,6 +874,41 @@ static void demoAppendDoesNotChangeFibonacci() {
     catch (const std::exception& e) {
         delete result;
         delete fib;
+        printError(e.what());
+    }
+}
+
+
+static void demoMultipleInfinities() {
+    printTitle("Multiple infinities");
+
+    LazySequence<int>* sequence = nullptr;
+    LazySequence<int>* appended = nullptr;
+
+    try {
+        sequence = createThreeNaturalsConcat();
+
+        std::cout << "  Sequence: naturals.concat(naturals).concat(naturals)\n";
+        printLazyInfo(*sequence);
+
+        std::cout << "  Get(0) = " << sequence->Get(0) << "\n";
+        std::cout << "  Get(omega + 3) = "
+                  << sequence->Get(TransfiniteIndex::AfterInfinity(3)) << "\n";
+        std::cout << "  Get(2*omega + 3) = "
+                  << sequence->Get(TransfiniteIndex(2, 3)) << "\n";
+
+        appended = sequence->Append(999);
+
+        std::cout << "\n  After Append(999):\n";
+        std::cout << "  Get(3*omega + 0) = "
+                  << appended->Get(TransfiniteIndex(3, 0)) << "\n";
+
+        delete appended;
+        delete sequence;
+    }
+    catch (const std::exception& e) {
+        delete appended;
+        delete sequence;
         printError(e.what());
     }
 }
@@ -842,9 +928,10 @@ static void lazyMenu() {
         std::cout << "  8. ConcatGenerator\n";
         std::cout << "  9. InsertSequenceGenerator\n";
         std::cout << " 10. Fibonacci append rule check\n";
+        std::cout << " 11. Multiple infinities demo\n";
         std::cout << "  0. Back\n";
 
-        if (!readIntInRange(choice, "Choice: ", 1, 10)) {
+        if (!readIntInRange(choice, "Choice: ", 1, 11)) {
             return;
         }
 
@@ -859,6 +946,7 @@ static void lazyMenu() {
         case 8: demoConcat(); break;
         case 9: demoInsertSequence(); break;
         case 10: demoAppendDoesNotChangeFibonacci(); break;
+        case 11: demoMultipleInfinities(); break;
         }
 
         pauseConsole();
@@ -1081,6 +1169,102 @@ static void demoFileLineWriteOnlyStream() {
     }
 }
 
+
+static void demoLiveFileWriter() {
+    printTitle("Live file writer");
+
+    std::string sourceFilename =
+        readLineWithPrompt("  Source file path: ");
+
+    std::string liveFilename =
+        readLineWithPrompt("  Live output file path: ");
+
+    int delaySeconds;
+    if (!readIntWithPrompt(delaySeconds, "  Delay between records in seconds: ") || delaySeconds < 0) {
+        printError("Delay must be non-negative");
+        return;
+    }
+
+    std::cout << "  Clear live file before writing?\n";
+    std::cout << "  1. Yes\n";
+    std::cout << "  2. No\n";
+
+    int clearChoice;
+    if (!readIntInRange(clearChoice, "Choice: ", 1, 2)) {
+        return;
+    }
+
+    bool clearLiveFile = clearChoice == 1;
+
+    try {
+        LiveFileWriter::Run(
+            sourceFilename,
+            liveFilename,
+            delaySeconds * 1000,
+            clearLiveFile,
+            std::cout
+        );
+
+        std::cout << "  Writer finished.\n";
+    }
+    catch (const std::exception& e) {
+        printError(e.what());
+    }
+}
+
+
+static void demoLiveFileConsumer() {
+    printTitle("Live file consumer");
+
+    std::string liveFilename =
+        readLineWithPrompt("  Live file path: ");
+
+    int batchSize;
+    if (!readIntWithPrompt(batchSize, "  Batch size: ") || batchSize <= 0) {
+        printError("Batch size must be positive");
+        return;
+    }
+
+    std::cout << "  Value mapper:\n";
+    std::cout << "  1. Identity: x\n";
+    std::cout << "  2. Multiply by 2: x * 2\n";
+    std::cout << "  3. Add 10: x + 10\n";
+
+    int mapperChoice;
+    if (!readIntInRange(mapperChoice, "Choice: ", 1, 3)) {
+        return;
+    }
+
+    double (*mapper)(const double&) = nullptr;
+
+    if (mapperChoice == 1) {
+        mapper = IdentityMapper;
+    }
+    else if (mapperChoice == 2) {
+        mapper = DoubleMapper;
+    }
+    else {
+        mapper = AddTenMapper;
+    }
+
+    try {
+        OnlineEventStatistics<double> statistics =
+            LiveFileBatchConsumer<double>::Run(
+                liveFilename,
+                batchSize,
+                mapper,
+                PrintLiveConsumerMessage
+            );
+
+        std::cout << "\n  Final statistics:\n";
+        printStatistics(statistics);
+    }
+    catch (const std::exception& e) {
+        printError(e.what());
+    }
+}
+
+
 static void streamsMenu() {
     int choice;
 
@@ -1298,6 +1482,57 @@ static void demoCreateProtocolFile() {
     }
 }
 
+
+static void demoEventBatchProcessingFromFile() {
+    printTitle("EventBatchProcessingTask with file batches");
+
+    std::string filename = readLineWithPrompt("  File path: ");
+
+    int batch_size;
+    if (!readIntWithPrompt(batch_size, "  Batch size: ") || batch_size <= 0) {
+        printError("Batch size must be positive");
+        return;
+    }
+
+    std::cout << "  MEASURE value mapper:\n";
+    std::cout << "  1. Identity: x\n";
+    std::cout << "  2. Multiply by 2: x * 2\n";
+    std::cout << "  3. Add 10: x + 10\n";
+    std::cout << "  4. Square: x * x\n";
+
+    int choice;
+    if (!readIntInRange(choice, "Choice: ", 1, 4)) {
+        return;
+    }
+
+    double (*mapper)(const double&) = nullptr;
+
+    if (choice == 1) {
+        mapper = IdentityMapper;
+    }
+    else if (choice == 2) {
+        mapper = DoubleMapper;
+    }
+    else if (choice == 3) {
+        mapper = AddTenMapper;
+    }
+    else {
+        mapper = SquareMapper;
+    }
+
+    try {
+        FileLineReadOnlyStream stream(filename);
+        OnlineEventStatistics<double> stats =
+            EventBatchProcessingTask<double>::Process(stream, batch_size, mapper);
+
+        printStatistics(stats);
+    }
+    catch (const std::exception& e) {
+        printError(e.what());
+    }
+}
+
+
 static void eventsMenu() {
     int choice;
 
@@ -1308,10 +1543,13 @@ static void eventsMenu() {
         std::cout << "  3. OnlineEventStatistics manually\n";
         std::cout << "  4. ProtocolStatisticsTask with string stream\n";
         std::cout << "  5. ProtocolStatisticsTask with file\n";
-        std::cout << "  6. Create protocol file\n";
+        std::cout << "  6. EventBatchProcessingTask with file batches\n";
+        std::cout << "  7. Create protocol file\n";
+        std::cout << "  8. Live file writer\n";
+        std::cout << "  9. Live file consumer\n";
         std::cout << "  0. Back\n";
 
-        if (!readIntInRange(choice, "Choice: ", 1, 6)) {
+        if (!readIntInRange(choice, "Choice: ", 1, 9)) {
             return;
         }
 
@@ -1321,7 +1559,10 @@ static void eventsMenu() {
         case 3: demoManualOnlineStatistics(); break;
         case 4: demoProtocolStatisticsStringStream(); break;
         case 5: demoProtocolStatisticsFile(); break;
-        case 6: demoCreateProtocolFile(); break;
+        case 6: demoEventBatchProcessingFromFile(); break;
+        case 7: demoCreateProtocolFile(); break;
+        case 8: demoLiveFileWriter(); break;
+        case 9: demoLiveFileConsumer(); break;
         }
 
         pauseConsole();
